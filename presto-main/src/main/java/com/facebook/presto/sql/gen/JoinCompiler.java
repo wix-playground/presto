@@ -296,8 +296,7 @@ public class JoinCompiler
                     .append(
                             channel.invoke("get", Object.class, blockIndex)
                                     .cast(type(Block.class))
-                                    .invoke("getRetainedSizeInBytes", int.class)
-                                    .cast(long.class))
+                                    .invoke("getRetainedSizeInBytes", long.class))
                     .longAdd()
                     .putField(sizeField);
         }
@@ -401,8 +400,7 @@ public class JoinCompiler
             ifStatement.condition(block.invoke(
                     "isNull",
                     boolean.class,
-                    blockPosition
-            ));
+                    blockPosition));
             ifStatement.ifTrue(constantTrue().ret());
             isPositionNullMethod.getBody().append(ifStatement);
         }
@@ -435,8 +433,7 @@ public class JoinCompiler
                         long.class,
                         hashChannel.invoke("get", Object.class, blockIndex).cast(Block.class),
                         blockPosition)
-                        .ret()
-        );
+                        .ret());
 
         hashPositionMethod
                 .getBody()

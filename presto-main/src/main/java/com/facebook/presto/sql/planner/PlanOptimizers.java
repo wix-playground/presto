@@ -19,6 +19,7 @@ import com.facebook.presto.sql.parser.SqlParser;
 import com.facebook.presto.sql.planner.iterative.IterativeOptimizer;
 import com.facebook.presto.sql.planner.iterative.Rule;
 import com.facebook.presto.sql.planner.iterative.rule.AddIntermediateAggregations;
+import com.facebook.presto.sql.planner.iterative.rule.CanonicalizeExpressions;
 import com.facebook.presto.sql.planner.iterative.rule.CreatePartialTopN;
 import com.facebook.presto.sql.planner.iterative.rule.EliminateCrossJoins;
 import com.facebook.presto.sql.planner.iterative.rule.EvaluateZeroLimit;
@@ -32,27 +33,47 @@ import com.facebook.presto.sql.planner.iterative.rule.MergeLimitWithDistinct;
 import com.facebook.presto.sql.planner.iterative.rule.MergeLimitWithSort;
 import com.facebook.presto.sql.planner.iterative.rule.MergeLimitWithTopN;
 import com.facebook.presto.sql.planner.iterative.rule.MergeLimits;
+import com.facebook.presto.sql.planner.iterative.rule.PickTableLayout;
+import com.facebook.presto.sql.planner.iterative.rule.PruneAggregationColumns;
+import com.facebook.presto.sql.planner.iterative.rule.PruneAggregationSourceColumns;
+import com.facebook.presto.sql.planner.iterative.rule.PruneCountAggregationOverScalar;
+import com.facebook.presto.sql.planner.iterative.rule.PruneCrossJoinColumns;
+import com.facebook.presto.sql.planner.iterative.rule.PruneFilterColumns;
+import com.facebook.presto.sql.planner.iterative.rule.PruneIndexSourceColumns;
+import com.facebook.presto.sql.planner.iterative.rule.PruneJoinChildrenColumns;
+import com.facebook.presto.sql.planner.iterative.rule.PruneJoinColumns;
+import com.facebook.presto.sql.planner.iterative.rule.PruneMarkDistinctColumns;
+import com.facebook.presto.sql.planner.iterative.rule.PruneOutputColumns;
+import com.facebook.presto.sql.planner.iterative.rule.PruneProjectColumns;
+import com.facebook.presto.sql.planner.iterative.rule.PruneSemiJoinColumns;
+import com.facebook.presto.sql.planner.iterative.rule.PruneSemiJoinFilteringSourceColumns;
 import com.facebook.presto.sql.planner.iterative.rule.PruneTableScanColumns;
+import com.facebook.presto.sql.planner.iterative.rule.PruneTopNColumns;
 import com.facebook.presto.sql.planner.iterative.rule.PruneValuesColumns;
 import com.facebook.presto.sql.planner.iterative.rule.PushAggregationThroughOuterJoin;
 import com.facebook.presto.sql.planner.iterative.rule.PushLimitThroughMarkDistinct;
 import com.facebook.presto.sql.planner.iterative.rule.PushLimitThroughProject;
 import com.facebook.presto.sql.planner.iterative.rule.PushLimitThroughSemiJoin;
+import com.facebook.presto.sql.planner.iterative.rule.PushPartialAggregationThroughExchange;
+import com.facebook.presto.sql.planner.iterative.rule.PushPartialAggregationThroughJoin;
 import com.facebook.presto.sql.planner.iterative.rule.PushProjectionThroughExchange;
 import com.facebook.presto.sql.planner.iterative.rule.PushProjectionThroughUnion;
+import com.facebook.presto.sql.planner.iterative.rule.PushTableWriteThroughUnion;
 import com.facebook.presto.sql.planner.iterative.rule.PushTopNThroughUnion;
 import com.facebook.presto.sql.planner.iterative.rule.RemoveEmptyDelete;
 import com.facebook.presto.sql.planner.iterative.rule.RemoveFullSample;
 import com.facebook.presto.sql.planner.iterative.rule.RemoveRedundantIdentityProjections;
+import com.facebook.presto.sql.planner.iterative.rule.RemoveTrivialFilters;
+import com.facebook.presto.sql.planner.iterative.rule.RemoveUnreferencedScalarApplyNodes;
 import com.facebook.presto.sql.planner.iterative.rule.SimplifyCountOverConstant;
 import com.facebook.presto.sql.planner.iterative.rule.SingleMarkDistinctToGroupBy;
 import com.facebook.presto.sql.planner.iterative.rule.SwapAdjacentWindowsBySpecifications;
 import com.facebook.presto.sql.planner.iterative.rule.TransformCorrelatedInPredicateToJoin;
-import com.facebook.presto.sql.planner.iterative.rule.TransformExistsApplyToScalarApply;
+import com.facebook.presto.sql.planner.iterative.rule.TransformExistsApplyToLateralNode;
 import com.facebook.presto.sql.planner.optimizations.AddExchanges;
 import com.facebook.presto.sql.planner.optimizations.AddLocalExchanges;
 import com.facebook.presto.sql.planner.optimizations.BeginTableWrite;
-import com.facebook.presto.sql.planner.optimizations.CanonicalizeExpressions;
+import com.facebook.presto.sql.planner.optimizations.CheckSubqueryNodesAreRewritten;
 import com.facebook.presto.sql.planner.optimizations.DesugaringOptimizer;
 import com.facebook.presto.sql.planner.optimizations.DetermineJoinDistributionType;
 import com.facebook.presto.sql.planner.optimizations.HashGenerationOptimizer;
@@ -62,20 +83,19 @@ import com.facebook.presto.sql.planner.optimizations.LimitPushDown;
 import com.facebook.presto.sql.planner.optimizations.MetadataDeleteOptimizer;
 import com.facebook.presto.sql.planner.optimizations.MetadataQueryOptimizer;
 import com.facebook.presto.sql.planner.optimizations.OptimizeMixedDistinctAggregations;
-import com.facebook.presto.sql.planner.optimizations.PartialAggregationPushDown;
-import com.facebook.presto.sql.planner.optimizations.PickLayout;
 import com.facebook.presto.sql.planner.optimizations.PlanOptimizer;
 import com.facebook.presto.sql.planner.optimizations.PredicatePushDown;
 import com.facebook.presto.sql.planner.optimizations.ProjectionPushDown;
 import com.facebook.presto.sql.planner.optimizations.PruneUnreferencedOutputs;
-import com.facebook.presto.sql.planner.optimizations.PushTableWriteThroughUnion;
-import com.facebook.presto.sql.planner.optimizations.RemoveUnreferencedScalarInputApplyNodes;
+import com.facebook.presto.sql.planner.optimizations.RemoveUnreferencedScalarLateralNodes;
 import com.facebook.presto.sql.planner.optimizations.SetFlatteningOptimizer;
 import com.facebook.presto.sql.planner.optimizations.SimplifyExpressions;
+import com.facebook.presto.sql.planner.optimizations.TransformCorrelatedNoAggregationSubqueryToJoin;
 import com.facebook.presto.sql.planner.optimizations.TransformCorrelatedScalarAggregationToJoin;
-import com.facebook.presto.sql.planner.optimizations.TransformQuantifiedComparisonApplyToScalarApply;
+import com.facebook.presto.sql.planner.optimizations.TransformCorrelatedSingleRowSubqueryToProject;
+import com.facebook.presto.sql.planner.optimizations.TransformQuantifiedComparisonApplyToLateralJoin;
 import com.facebook.presto.sql.planner.optimizations.TransformUncorrelatedInPredicateSubqueryToSemiJoin;
-import com.facebook.presto.sql.planner.optimizations.TransformUncorrelatedScalarToJoin;
+import com.facebook.presto.sql.planner.optimizations.TransformUncorrelatedLateralToJoin;
 import com.facebook.presto.sql.planner.optimizations.UnaliasSymbolReferences;
 import com.facebook.presto.sql.planner.optimizations.WindowFilterPushDown;
 import com.google.common.collect.ImmutableList;
@@ -118,8 +138,26 @@ public class PlanOptimizers
         this.exporter = exporter;
         ImmutableList.Builder<PlanOptimizer> builder = ImmutableList.builder();
 
-        Set<Rule> predicatePushDownRules = ImmutableSet.of(
+        Set<Rule<?>> predicatePushDownRules = ImmutableSet.of(
                 new MergeFilters());
+
+        // TODO: Once we've migrated handling all the plan node types, replace uses of PruneUnreferencedOutputs with an IterativeOptimizer containing these rules.
+        Set<Rule<?>> columnPruningRules = ImmutableSet.of(
+                new PruneAggregationColumns(),
+                new PruneAggregationSourceColumns(),
+                new PruneCrossJoinColumns(),
+                new PruneFilterColumns(),
+                new PruneIndexSourceColumns(),
+                new PruneJoinChildrenColumns(),
+                new PruneJoinColumns(),
+                new PruneMarkDistinctColumns(),
+                new PruneOutputColumns(),
+                new PruneProjectColumns(),
+                new PruneSemiJoinColumns(),
+                new PruneSemiJoinFilteringSourceColumns(),
+                new PruneTopNColumns(),
+                new PruneValuesColumns(),
+                new PruneTableScanColumns());
 
         IterativeOptimizer inlineProjections = new IterativeOptimizer(
                 stats,
@@ -136,11 +174,15 @@ public class PlanOptimizers
 
         builder.add(
                 new DesugaringOptimizer(metadata, sqlParser), // Clean up all the sugar in expressions, e.g. AtTimeZone, must be run before all the other optimizers
-                new CanonicalizeExpressions(),
                 new IterativeOptimizer(
                         stats,
-                        ImmutableSet.<Rule>builder()
+                        ImmutableList.of(new com.facebook.presto.sql.planner.optimizations.CanonicalizeExpressions()),
+                        new CanonicalizeExpressions().rules()),
+                new IterativeOptimizer(
+                        stats,
+                        ImmutableSet.<Rule<?>>builder()
                                 .addAll(predicatePushDownRules)
+                                .addAll(columnPruningRules)
                                 .addAll(ImmutableSet.of(
                                         new RemoveRedundantIdentityProjections(),
                                         new RemoveFullSample(),
@@ -152,26 +194,17 @@ public class PlanOptimizers
                                         new MergeLimitWithTopN(),
                                         new PushLimitThroughMarkDistinct(),
                                         new PushLimitThroughSemiJoin(),
+                                        new RemoveTrivialFilters(),
+                                        new ImplementFilteredAggregations(),
+                                        new ImplementBernoulliSampleAsFilter(),
                                         new MergeLimitWithDistinct(),
-
-                                        new PruneValuesColumns(),
-                                        new PruneTableScanColumns()))
-                                .build()
-                ),
-                new IterativeOptimizer(
-                        stats,
-                        ImmutableSet.of(
-                                new ImplementFilteredAggregations(),
-                                new ImplementBernoulliSampleAsFilter())),
+                                        new PruneCountAggregationOverScalar()))
+                                .build()),
                 new SimplifyExpressions(metadata, sqlParser),
                 new UnaliasSymbolReferences(),
                 new IterativeOptimizer(
                         stats,
-                        ImmutableSet.of(
-                                new RemoveRedundantIdentityProjections(),
-                                new TransformCorrelatedInPredicateToJoin(),
-                                new ImplementFilteredAggregations())
-                ),
+                        ImmutableSet.of(new RemoveRedundantIdentityProjections())),
                 new SetFlatteningOptimizer(),
                 new ImplementIntersectAndExceptAsUnion(),
                 new LimitPushDown(), // Run the LimitPushDown after flattening set operators to make it easier to do the set flattening
@@ -179,23 +212,35 @@ public class PlanOptimizers
                 inlineProjections,
                 new IterativeOptimizer(
                         stats,
-                        ImmutableSet.of(new TransformExistsApplyToScalarApply(metadata.getFunctionRegistry()))),
-                new TransformQuantifiedComparisonApplyToScalarApply(metadata),
-                new RemoveUnreferencedScalarInputApplyNodes(),
-                new TransformUncorrelatedInPredicateSubqueryToSemiJoin(),
-                new TransformUncorrelatedScalarToJoin(),
+                        ImmutableSet.of(new TransformExistsApplyToLateralNode(metadata.getFunctionRegistry()))),
+                new TransformQuantifiedComparisonApplyToLateralJoin(metadata),
+                new IterativeOptimizer(stats,
+                        ImmutableList.of(
+                                new RemoveUnreferencedScalarLateralNodes(),
+                                new TransformUncorrelatedLateralToJoin(),
+                                new TransformUncorrelatedInPredicateSubqueryToSemiJoin(),
+                                new TransformCorrelatedScalarAggregationToJoin(metadata.getFunctionRegistry())),
+                        ImmutableSet.of(
+                                new com.facebook.presto.sql.planner.iterative.rule.RemoveUnreferencedScalarLateralNodes(),
+                                new com.facebook.presto.sql.planner.iterative.rule.TransformUncorrelatedLateralToJoin(),
+                                new com.facebook.presto.sql.planner.iterative.rule.TransformUncorrelatedInPredicateSubqueryToSemiJoin(),
+                                new com.facebook.presto.sql.planner.iterative.rule.TransformCorrelatedScalarAggregationToJoin(metadata.getFunctionRegistry()))),
                 new IterativeOptimizer(
                         stats,
-                        ImmutableList.of(new TransformCorrelatedScalarAggregationToJoin(metadata.getFunctionRegistry())),
-                        ImmutableSet.of(new com.facebook.presto.sql.planner.iterative.rule.TransformCorrelatedScalarAggregationToJoin(metadata.getFunctionRegistry()))),
+                        ImmutableSet.of(
+                                new RemoveUnreferencedScalarApplyNodes(),
+                                new TransformCorrelatedInPredicateToJoin(), // must be run after PruneUnreferencedOutputs
+                                new ImplementFilteredAggregations())),
+                new TransformCorrelatedNoAggregationSubqueryToJoin(),
+                new TransformCorrelatedSingleRowSubqueryToProject(),
+                new CheckSubqueryNodesAreRewritten(),
                 new PredicatePushDown(metadata, sqlParser),
                 new PruneUnreferencedOutputs(),
                 new IterativeOptimizer(
                         stats,
                         ImmutableSet.of(
                                 new RemoveRedundantIdentityProjections(),
-                                new PushAggregationThroughOuterJoin())
-                ),
+                                new PushAggregationThroughOuterJoin())),
                 inlineProjections,
                 new SimplifyExpressions(metadata, sqlParser), // Re-run the SimplifyExpressions to simplify any recomposed expressions from other optimizations
                 projectionPushDown,
@@ -217,14 +262,12 @@ public class PlanOptimizers
                 new PruneUnreferencedOutputs(), // Make sure to run this at the end to help clean the plan for logging/execution and not remove info that other optimizers might need at an earlier point
                 new IterativeOptimizer(
                         stats,
-                        ImmutableSet.of(new RemoveRedundantIdentityProjections())
-                ),
+                        ImmutableSet.of(new RemoveRedundantIdentityProjections())),
                 new MetadataQueryOptimizer(metadata),
                 new IterativeOptimizer(
                         stats,
                         ImmutableList.of(new com.facebook.presto.sql.planner.optimizations.EliminateCrossJoins()), // This can pull up Filter and Project nodes from between Joins, so we need to push them down again
-                        ImmutableSet.of(new EliminateCrossJoins())
-                ),
+                        ImmutableSet.of(new EliminateCrossJoins())),
                 new PredicatePushDown(metadata, sqlParser),
                 projectionPushDown);
 
@@ -245,17 +288,24 @@ public class PlanOptimizers
 
         if (!forceSingleNode) {
             builder.add(new DetermineJoinDistributionType()); // Must run before AddExchanges
-            builder.add(new PushTableWriteThroughUnion()); // Must run before AddExchanges
+            builder.add(
+                    new IterativeOptimizer(
+                            stats,
+                            ImmutableList.of(new com.facebook.presto.sql.planner.optimizations.PushTableWriteThroughUnion()), // Must run before AddExchanges
+                            ImmutableSet.of(new PushTableWriteThroughUnion())));
             builder.add(new AddExchanges(metadata, sqlParser));
         }
-
-        builder.add(new PickLayout(metadata));
 
         builder.add(
                 new IterativeOptimizer(
                         stats,
-                        ImmutableSet.of(new RemoveEmptyDelete()) // Run RemoveEmptyDelete after table scan is removed by PickLayout/AddExchanges
-                ));
+                        ImmutableList.of(new com.facebook.presto.sql.planner.optimizations.PickLayout(metadata)),
+                        new PickTableLayout(metadata).rules()));
+
+        builder.add(
+                new IterativeOptimizer(
+                        stats,
+                        ImmutableSet.of(new RemoveEmptyDelete()))); // Run RemoveEmptyDelete after table scan is removed by PickTableLayout/AddExchanges
 
         builder.add(new PredicatePushDown(metadata, sqlParser)); // Run predicate push down one more time in case we can leverage new information from layouts' effective predicate
         builder.add(projectionPushDown);
@@ -271,13 +321,17 @@ public class PlanOptimizers
 
         // Optimizers above this do not need to care about aggregations with the type other than SINGLE
         // This optimizer must be run after all exchange-related optimizers
-        builder.add(new PartialAggregationPushDown(metadata.getFunctionRegistry()));
+        builder.add(new IterativeOptimizer(
+                stats,
+                ImmutableSet.of(
+                        new PushPartialAggregationThroughJoin(),
+                        new PushPartialAggregationThroughExchange(metadata.getFunctionRegistry()),
+                        new PruneJoinColumns())));
         builder.add(new IterativeOptimizer(
                 stats,
                 ImmutableSet.of(
                         new AddIntermediateAggregations(),
                         new RemoveRedundantIdentityProjections())));
-
         // DO NOT add optimizers that change the plan shape (computations) after this point
 
         // Precomputed hashes - this assumes that partitioning will not change

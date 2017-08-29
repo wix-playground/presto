@@ -613,13 +613,7 @@ public class QueryStateMachine
 
     private boolean transitionToFinished()
     {
-        try {
-            metadata.cleanupQuery(session);
-        }
-        catch (Throwable t) {
-            log.error("Error during cleanupQuery: %s", t);
-        }
-
+        cleanupQueryQuietly();
         recordDoneStats();
 
         return queryState.setIf(FINISHED, currentState -> !currentState.isDone());
@@ -627,20 +621,13 @@ public class QueryStateMachine
 
     public boolean transitionToFailed(Throwable throwable)
     {
-        try {
-            metadata.cleanupQuery(session);
-        }
-        catch (Throwable t) {
-            log.error("Error during cleanupQuery: %s", t);
-        }
-
-        requireNonNull(throwable, "throwable is null");
-
+        cleanupQueryQuietly();
         recordDoneStats();
 
         // NOTE: The failure cause must be set before triggering the state change, so
         // listeners can observe the exception. This is safe because the failure cause
         // can only be observed if the transition to FAILED is successful.
+        requireNonNull(throwable, "throwable is null");
         failureCause.compareAndSet(null, toFailure(throwable));
 
         boolean failed = queryState.setIf(FAILED, currentState -> !currentState.isDone());
@@ -657,6 +644,7 @@ public class QueryStateMachine
 
     public boolean transitionToCanceled()
     {
+        cleanupQueryQuietly();
         recordDoneStats();
 
         // NOTE: The failure cause must be set before triggering the state change, so
@@ -670,6 +658,16 @@ public class QueryStateMachine
         }
 
         return canceled;
+    }
+
+    private void cleanupQueryQuietly()
+    {
+        try {
+            metadata.cleanupQuery(session);
+        }
+        catch (Throwable t) {
+            log.error("Error cleaning up query: %s", t);
+        }
     }
 
     private void recordDoneStats()
@@ -766,8 +764,7 @@ public class QueryStateMachine
                 outputStage.getStageStats(),
                 ImmutableList.of(), // Remove the tasks
                 ImmutableList.of(), // Remove the substages
-                outputStage.getFailureCause()
-        );
+                outputStage.getFailureCause());
 
         QueryInfo prunedQueryInfo = new QueryInfo(
                 queryInfo.getQueryId(),
@@ -778,7 +775,7 @@ public class QueryStateMachine
                 queryInfo.getSelf(),
                 queryInfo.getFieldNames(),
                 queryInfo.getQuery(),
-                queryInfo.getQueryStats(),
+                pruneQueryStats(queryInfo.getQueryStats()),
                 queryInfo.getSetSessionProperties(),
                 queryInfo.getResetSessionProperties(),
                 queryInfo.getAddedPreparedStatements(),
@@ -794,6 +791,46 @@ public class QueryStateMachine
                 queryInfo.isCompleteInfo(),
                 queryInfo.getResourceGroupName());
         finalQueryInfo.compareAndSet(finalInfo, Optional.of(prunedQueryInfo));
+    }
+
+    private QueryStats pruneQueryStats(QueryStats queryStats)
+    {
+        return new QueryStats(
+                queryStats.getCreateTime(),
+                queryStats.getExecutionStartTime(),
+                queryStats.getLastHeartbeat(),
+                queryStats.getEndTime(),
+                queryStats.getElapsedTime(),
+                queryStats.getQueuedTime(),
+                queryStats.getAnalysisTime(),
+                queryStats.getDistributedPlanningTime(),
+                queryStats.getTotalPlanningTime(),
+                queryStats.getFinishingTime(),
+                queryStats.getTotalTasks(),
+                queryStats.getRunningTasks(),
+                queryStats.getCompletedTasks(),
+                queryStats.getTotalDrivers(),
+                queryStats.getQueuedDrivers(),
+                queryStats.getRunningDrivers(),
+                queryStats.getBlockedDrivers(),
+                queryStats.getCompletedDrivers(),
+                queryStats.getCumulativeMemory(),
+                queryStats.getTotalMemoryReservation(),
+                queryStats.getPeakMemoryReservation(),
+                queryStats.isScheduled(),
+                queryStats.getTotalScheduledTime(),
+                queryStats.getTotalCpuTime(),
+                queryStats.getTotalUserTime(),
+                queryStats.getTotalBlockedTime(),
+                queryStats.isFullyBlocked(),
+                queryStats.getBlockedReasons(),
+                queryStats.getRawInputDataSize(),
+                queryStats.getRawInputPositions(),
+                queryStats.getProcessedInputDataSize(),
+                queryStats.getProcessedInputPositions(),
+                queryStats.getOutputDataSize(),
+                queryStats.getOutputPositions(),
+                ImmutableList.of()); // Remove the operator summaries as OperatorInfo (especially ExchangeClientStatus) can hold onto a large amount of memory
     }
 
     private long tickerNanos()

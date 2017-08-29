@@ -13,11 +13,10 @@
  */
 package com.facebook.presto.sql.planner.iterative.rule;
 
-import com.facebook.presto.Session;
-import com.facebook.presto.sql.planner.PlanNodeIdAllocator;
+import com.facebook.presto.matching.Capture;
+import com.facebook.presto.matching.Captures;
+import com.facebook.presto.matching.Pattern;
 import com.facebook.presto.sql.planner.Symbol;
-import com.facebook.presto.sql.planner.SymbolAllocator;
-import com.facebook.presto.sql.planner.iterative.Lookup;
 import com.facebook.presto.sql.planner.iterative.Rule;
 import com.facebook.presto.sql.planner.plan.PlanNode;
 import com.facebook.presto.sql.planner.plan.WindowNode;
@@ -25,28 +24,33 @@ import com.facebook.presto.sql.planner.plan.WindowNode;
 import java.util.Iterator;
 import java.util.Optional;
 
+import static com.facebook.presto.matching.Capture.newCapture;
 import static com.facebook.presto.sql.planner.iterative.rule.Util.transpose;
 import static com.facebook.presto.sql.planner.optimizations.WindowNodeUtil.dependsOn;
+import static com.facebook.presto.sql.planner.plan.Patterns.source;
+import static com.facebook.presto.sql.planner.plan.Patterns.window;
 
 public class SwapAdjacentWindowsBySpecifications
-        implements Rule
+        implements Rule<WindowNode>
 {
+    private static final Capture<WindowNode> CHILD = newCapture();
+
+    private static final Pattern<WindowNode> PATTERN = window()
+            .with(source().matching(window().capturedAs(CHILD)));
+
     @Override
-    public Optional<PlanNode> apply(PlanNode node, Lookup lookup, PlanNodeIdAllocator idAllocator, SymbolAllocator symbolAllocator, Session session)
+    public Pattern<WindowNode> getPattern()
     {
-        if (!(node instanceof WindowNode)) {
-            return Optional.empty();
-        }
+        return PATTERN;
+    }
 
-        WindowNode parent = (WindowNode) node;
+    @Override
+    public Optional<PlanNode> apply(WindowNode parent, Captures captures, Context context)
+    {
+        WindowNode windowNode = captures.get(CHILD);
 
-        PlanNode child = lookup.resolve(parent.getSource());
-        if (!(child instanceof WindowNode)) {
-            return Optional.empty();
-        }
-
-        if ((compare(parent, (WindowNode) child) < 0) && (!dependsOn(parent, (WindowNode) child))) {
-            return Optional.of(transpose(parent, child));
+        if ((compare(parent, windowNode) < 0) && (!dependsOn(parent, windowNode))) {
+            return Optional.of(transpose(parent, windowNode));
         }
         else {
             return Optional.empty();

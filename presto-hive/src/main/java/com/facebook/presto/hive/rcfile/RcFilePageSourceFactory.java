@@ -19,6 +19,7 @@ import com.facebook.presto.hive.HiveColumnHandle;
 import com.facebook.presto.hive.HivePageSourceFactory;
 import com.facebook.presto.rcfile.AircompressorCodecFactory;
 import com.facebook.presto.rcfile.HadoopCodecFactory;
+import com.facebook.presto.rcfile.RcFileCorruptionException;
 import com.facebook.presto.rcfile.RcFileEncoding;
 import com.facebook.presto.rcfile.RcFileReader;
 import com.facebook.presto.rcfile.binary.BinaryRcFileEncoding;
@@ -51,6 +52,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.Properties;
 
+import static com.facebook.presto.hive.HiveErrorCode.HIVE_BAD_DATA;
 import static com.facebook.presto.hive.HiveErrorCode.HIVE_CANNOT_OPEN_SPLIT;
 import static com.facebook.presto.hive.HiveErrorCode.HIVE_MISSING_DATA;
 import static com.facebook.presto.hive.HiveUtil.getDeserializerClassName;
@@ -94,6 +96,7 @@ public class RcFilePageSourceFactory
             Path path,
             long start,
             long length,
+            long fileSize,
             Properties schema,
             List<HiveColumnHandle> columns,
             TupleDomain<HiveColumnHandle> effectivePredicate,
@@ -111,11 +114,9 @@ public class RcFilePageSourceFactory
             return Optional.empty();
         }
 
-        long size;
         FSDataInputStream inputStream;
         try {
             FileSystem fileSystem = hdfsEnvironment.getFileSystem(session.getUser(), path, configuration);
-            size = fileSystem.getFileStatus(path).getLen();
             inputStream = fileSystem.open(path);
         }
         catch (Exception e) {
@@ -133,7 +134,7 @@ public class RcFilePageSourceFactory
             }
 
             RcFileReader rcFileReader = new RcFileReader(
-                    new HdfsRcFileDataSource(path.toString(), inputStream, size, stats),
+                    new HdfsRcFileDataSource(path.toString(), inputStream, fileSize, stats),
                     rcFileEncoding,
                     readColumns.build(),
                     new AircompressorCodecFactory(new HadoopCodecFactory(configuration.getClassLoader())),
@@ -145,8 +146,7 @@ public class RcFilePageSourceFactory
                     rcFileReader,
                     columns,
                     hiveStorageTimeZone,
-                    typeManager
-            ));
+                    typeManager));
         }
         catch (Throwable e) {
             try {
@@ -158,6 +158,9 @@ public class RcFilePageSourceFactory
                 throw (PrestoException) e;
             }
             String message = splitError(e, path, start, length);
+            if (e instanceof RcFileCorruptionException) {
+                throw new PrestoException(HIVE_BAD_DATA, message, e);
+            }
             if (e.getClass().getSimpleName().equals("BlockMissingException")) {
                 throw new PrestoException(HIVE_MISSING_DATA, message, e);
             }

@@ -13,6 +13,8 @@
  */
 package com.facebook.presto.hive;
 
+import com.facebook.presto.hive.HiveClientConfig.HdfsAuthenticationType;
+import com.facebook.presto.hive.HiveClientConfig.HiveMetastoreAuthenticationType;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.net.HostAndPort;
@@ -74,22 +76,22 @@ public class TestHiveClientConfig
                 .setParquetOptimizedReaderEnabled(false)
                 .setAssumeCanonicalPartitionKeys(false)
                 .setOrcBloomFiltersEnabled(false)
+                .setOrcDefaultBloomFilterFpp(0.05)
                 .setOrcMaxMergeDistance(new DataSize(1, Unit.MEGABYTE))
                 .setOrcMaxBufferSize(new DataSize(8, Unit.MEGABYTE))
                 .setOrcStreamBufferSize(new DataSize(8, Unit.MEGABYTE))
-                .setRcfileOptimizedWriterEnabled(false)
-                .setHiveMetastoreAuthenticationType(HiveClientConfig.HiveMetastoreAuthenticationType.NONE)
-                .setHiveMetastoreServicePrincipal(null)
-                .setHiveMetastoreClientPrincipal(null)
-                .setHiveMetastoreClientKeytab(null)
-                .setHdfsAuthenticationType(HiveClientConfig.HdfsAuthenticationType.NONE)
+                .setOrcMaxReadBlockSize(new DataSize(16, Unit.MEGABYTE))
+                .setRcfileOptimizedWriterEnabled(true)
+                .setRcfileWriterValidate(false)
+                .setOrcOptimizedWriterEnabled(false)
+                .setHiveMetastoreAuthenticationType(HiveMetastoreAuthenticationType.NONE)
+                .setHdfsAuthenticationType(HdfsAuthenticationType.NONE)
                 .setHdfsImpersonationEnabled(false)
-                .setHdfsPrestoPrincipal(null)
-                .setHdfsPrestoKeytab(null)
                 .setSkipDeletionForAlter(false)
                 .setBucketExecutionEnabled(true)
                 .setBucketWritingEnabled(true)
                 .setFileSystemMaxCacheSize(1000)
+                .setTableStatisticsEnabled(true)
                 .setWritesToNonManagedTablesEnabled(false));
     }
 
@@ -137,22 +139,22 @@ public class TestHiveClientConfig
                 .put("hive.parquet-predicate-pushdown.enabled", "true")
                 .put("hive.parquet-optimized-reader.enabled", "true")
                 .put("hive.orc.bloom-filters.enabled", "true")
+                .put("hive.orc.default-bloom-filter-fpp", "0.96")
                 .put("hive.orc.max-merge-distance", "22kB")
                 .put("hive.orc.max-buffer-size", "44kB")
                 .put("hive.orc.stream-buffer-size", "55kB")
-                .put("hive.rcfile-optimized-writer.enabled", "true")
+                .put("hive.orc.max-read-block-size", "66kB")
+                .put("hive.rcfile-optimized-writer.enabled", "false")
+                .put("hive.rcfile.writer.validate", "true")
+                .put("hive.orc.optimized-writer.enabled", "true")
                 .put("hive.metastore.authentication.type", "KERBEROS")
-                .put("hive.metastore.service.principal", "hive/_HOST@EXAMPLE.COM")
-                .put("hive.metastore.client.principal", "metastore@EXAMPLE.COM")
-                .put("hive.metastore.client.keytab", "/tmp/metastore.keytab")
                 .put("hive.hdfs.authentication.type", "KERBEROS")
                 .put("hive.hdfs.impersonation.enabled", "true")
-                .put("hive.hdfs.presto.principal", "presto@EXAMPLE.COM")
-                .put("hive.hdfs.presto.keytab", "/tmp/presto.keytab")
                 .put("hive.skip-deletion-for-alter", "true")
                 .put("hive.bucket-execution", "false")
                 .put("hive.bucket-writing", "false")
                 .put("hive.fs.cache.max-size", "1010")
+                .put("hive.table-statistics-enabled", "false")
                 .put("hive.non-managed-table-writes-enabled", "true")
                 .build();
 
@@ -197,22 +199,22 @@ public class TestHiveClientConfig
                 .setParquetOptimizedReaderEnabled(true)
                 .setAssumeCanonicalPartitionKeys(true)
                 .setOrcBloomFiltersEnabled(true)
+                .setOrcDefaultBloomFilterFpp(0.96)
                 .setOrcMaxMergeDistance(new DataSize(22, Unit.KILOBYTE))
                 .setOrcMaxBufferSize(new DataSize(44, Unit.KILOBYTE))
                 .setOrcStreamBufferSize(new DataSize(55, Unit.KILOBYTE))
-                .setRcfileOptimizedWriterEnabled(true)
-                .setHiveMetastoreAuthenticationType(HiveClientConfig.HiveMetastoreAuthenticationType.KERBEROS)
-                .setHiveMetastoreServicePrincipal("hive/_HOST@EXAMPLE.COM")
-                .setHiveMetastoreClientPrincipal("metastore@EXAMPLE.COM")
-                .setHiveMetastoreClientKeytab("/tmp/metastore.keytab")
-                .setHdfsAuthenticationType(HiveClientConfig.HdfsAuthenticationType.KERBEROS)
+                .setOrcMaxReadBlockSize(new DataSize(66, Unit.KILOBYTE))
+                .setRcfileOptimizedWriterEnabled(false)
+                .setRcfileWriterValidate(true)
+                .setOrcOptimizedWriterEnabled(true)
+                .setHiveMetastoreAuthenticationType(HiveMetastoreAuthenticationType.KERBEROS)
+                .setHdfsAuthenticationType(HdfsAuthenticationType.KERBEROS)
                 .setHdfsImpersonationEnabled(true)
-                .setHdfsPrestoPrincipal("presto@EXAMPLE.COM")
-                .setHdfsPrestoKeytab("/tmp/presto.keytab")
                 .setSkipDeletionForAlter(true)
                 .setBucketExecutionEnabled(false)
                 .setBucketWritingEnabled(false)
                 .setFileSystemMaxCacheSize(1010)
+                .setTableStatisticsEnabled(false)
                 .setWritesToNonManagedTablesEnabled(true);
 
         ConfigAssertions.assertFullMapping(properties, expected);

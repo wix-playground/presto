@@ -17,7 +17,6 @@ import com.facebook.presto.spi.block.SortOrder;
 import com.facebook.presto.sql.planner.Symbol;
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
-import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Iterables;
@@ -29,13 +28,15 @@ import java.util.Map;
 
 import static com.facebook.presto.spi.StandardErrorCode.NOT_SUPPORTED;
 import static com.facebook.presto.util.Failures.checkCondition;
+import static com.google.common.base.Preconditions.checkArgument;
 import static java.util.Objects.requireNonNull;
 
 @Immutable
 public class TopNNode
         extends PlanNode
 {
-    public enum Step {
+    public enum Step
+    {
         SINGLE,
         PARTIAL,
         FINAL
@@ -58,11 +59,11 @@ public class TopNNode
         super(id);
 
         requireNonNull(source, "source is null");
-        Preconditions.checkArgument(count >= 0, "count must be positive");
+        checkArgument(count >= 0, "count must be positive");
         checkCondition(count <= Integer.MAX_VALUE, NOT_SUPPORTED, "ORDER BY LIMIT > %s is not supported", Integer.MAX_VALUE);
         requireNonNull(orderBy, "orderBy is null");
-        Preconditions.checkArgument(!orderBy.isEmpty(), "orderBy is empty");
-        Preconditions.checkArgument(orderings.size() == orderBy.size(), "orderBy and orderings sizes don't match");
+        checkArgument(!orderBy.isEmpty(), "orderBy is empty");
+        checkArgument(orderings.size() == orderBy.size(), "orderBy and orderings sizes don't match");
 
         this.source = source;
         this.count = count;

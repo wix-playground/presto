@@ -18,6 +18,7 @@ import com.facebook.presto.cost.CostCalculator;
 import com.facebook.presto.cost.PlanNodeCost;
 import com.facebook.presto.execution.StageInfo;
 import com.facebook.presto.execution.StageStats;
+import com.facebook.presto.metadata.FunctionRegistry;
 import com.facebook.presto.metadata.Metadata;
 import com.facebook.presto.metadata.OperatorNotFoundException;
 import com.facebook.presto.metadata.Signature;
@@ -40,6 +41,7 @@ import com.facebook.presto.sql.planner.SubPlan;
 import com.facebook.presto.sql.planner.Symbol;
 import com.facebook.presto.sql.planner.iterative.GroupReference;
 import com.facebook.presto.sql.planner.plan.AggregationNode;
+import com.facebook.presto.sql.planner.plan.AggregationNode.Aggregation;
 import com.facebook.presto.sql.planner.plan.ApplyNode;
 import com.facebook.presto.sql.planner.plan.AssignUniqueId;
 import com.facebook.presto.sql.planner.plan.Assignments;
@@ -56,6 +58,7 @@ import com.facebook.presto.sql.planner.plan.IndexJoinNode;
 import com.facebook.presto.sql.planner.plan.IndexSourceNode;
 import com.facebook.presto.sql.planner.plan.IntersectNode;
 import com.facebook.presto.sql.planner.plan.JoinNode;
+import com.facebook.presto.sql.planner.plan.LateralJoinNode;
 import com.facebook.presto.sql.planner.plan.LimitNode;
 import com.facebook.presto.sql.planner.plan.MarkDistinctNode;
 import com.facebook.presto.sql.planner.plan.MetadataDeleteNode;
@@ -133,13 +136,14 @@ public class PlanPrinter
     private final StringBuilder output = new StringBuilder();
     private final Metadata metadata;
     private final Optional<Map<PlanNodeId, PlanNodeStats>> stats;
+    private final boolean verbose;
 
     private PlanPrinter(PlanNode plan, Map<Symbol, Type> types, Metadata metadata, CostCalculator costCalculator, Session sesion)
     {
-        this(plan, types, metadata, costCalculator, sesion, 0);
+        this(plan, types, metadata, costCalculator, sesion, 0, false);
     }
 
-    private PlanPrinter(PlanNode plan, Map<Symbol, Type> types, Metadata metadata, CostCalculator costCalculator, Session session, int indent)
+    private PlanPrinter(PlanNode plan, Map<Symbol, Type> types, Metadata metadata, CostCalculator costCalculator, Session session, int indent, boolean verbose)
     {
         requireNonNull(plan, "plan is null");
         requireNonNull(types, "types is null");
@@ -148,13 +152,14 @@ public class PlanPrinter
 
         this.metadata = metadata;
         this.stats = Optional.empty();
+        this.verbose = verbose;
 
         Map<PlanNodeId, PlanNodeCost> costs = costCalculator.calculateCostForPlan(session, types, plan);
         Visitor visitor = new Visitor(types, costs, session);
         plan.accept(visitor, indent);
     }
 
-    private PlanPrinter(PlanNode plan, Map<Symbol, Type> types, Metadata metadata, CostCalculator costCalculator, Session session, Map<PlanNodeId, PlanNodeStats> stats, int indent)
+    private PlanPrinter(PlanNode plan, Map<Symbol, Type> types, Metadata metadata, CostCalculator costCalculator, Session session, Map<PlanNodeId, PlanNodeStats> stats, int indent, boolean verbose)
     {
         requireNonNull(plan, "plan is null");
         requireNonNull(types, "types is null");
@@ -163,6 +168,7 @@ public class PlanPrinter
 
         this.metadata = metadata;
         this.stats = Optional.of(stats);
+        this.verbose = verbose;
 
         Map<PlanNodeId, PlanNodeCost> costs = costCalculator.calculateCostForPlan(session, types, plan);
         Visitor visitor = new Visitor(types, costs, session);
@@ -182,15 +188,25 @@ public class PlanPrinter
 
     public static String textLogicalPlan(PlanNode plan, Map<Symbol, Type> types, Metadata metadata, CostCalculator costCalculator, Session session, int indent)
     {
-        return new PlanPrinter(plan, types, metadata, costCalculator, session, indent).toString();
+        return textLogicalPlan(plan, types, metadata, costCalculator, session, indent, false);
     }
 
-    public static String textLogicalPlan(PlanNode plan, Map<Symbol, Type> types, Metadata metadata, CostCalculator costCalculator, Session session, Map<PlanNodeId, PlanNodeStats> stats, int indent)
+    public static String textLogicalPlan(PlanNode plan, Map<Symbol, Type> types, Metadata metadata, CostCalculator costCalculator, Session session, int indent, boolean verbose)
     {
-        return new PlanPrinter(plan, types, metadata, costCalculator, session, stats, indent).toString();
+        return new PlanPrinter(plan, types, metadata, costCalculator, session, indent, verbose).toString();
+    }
+
+    public static String textLogicalPlan(PlanNode plan, Map<Symbol, Type> types, Metadata metadata, CostCalculator costCalculator, Session session, Map<PlanNodeId, PlanNodeStats> stats, int indent, boolean verbose)
+    {
+        return new PlanPrinter(plan, types, metadata, costCalculator, session, stats, indent, verbose).toString();
     }
 
     public static String textDistributedPlan(StageInfo outputStageInfo, Metadata metadata, CostCalculator costCalculator, Session session)
+    {
+        return textDistributedPlan(outputStageInfo, metadata, costCalculator, session, false);
+    }
+
+    public static String textDistributedPlan(StageInfo outputStageInfo, Metadata metadata, CostCalculator costCalculator, Session session, boolean verbose)
     {
         StringBuilder builder = new StringBuilder();
         List<StageInfo> allStages = outputStageInfo.getSubStages().stream()
@@ -198,7 +214,7 @@ public class PlanPrinter
                 .collect(toImmutableList());
         for (StageInfo stageInfo : allStages) {
             Map<PlanNodeId, PlanNodeStats> aggregatedStats = aggregatePlanNodeStats(stageInfo);
-            builder.append(formatFragment(metadata, costCalculator, session, stageInfo.getPlan(), Optional.of(stageInfo.getStageStats()), Optional.of(aggregatedStats)));
+            builder.append(formatFragment(metadata, costCalculator, session, stageInfo.getPlan(), Optional.of(stageInfo), Optional.of(aggregatedStats), verbose));
         }
 
         return builder.toString();
@@ -206,29 +222,42 @@ public class PlanPrinter
 
     public static String textDistributedPlan(SubPlan plan, Metadata metadata, CostCalculator costCalculator, Session session)
     {
+        return textDistributedPlan(plan, metadata, costCalculator, session, false);
+    }
+
+    public static String textDistributedPlan(SubPlan plan, Metadata metadata, CostCalculator costCalculator, Session session, boolean verbose)
+    {
         StringBuilder builder = new StringBuilder();
         for (PlanFragment fragment : plan.getAllFragments()) {
-            builder.append(formatFragment(metadata, costCalculator, session, fragment, Optional.empty(), Optional.empty()));
+            builder.append(formatFragment(metadata, costCalculator, session, fragment, Optional.empty(), Optional.empty(), verbose));
         }
 
         return builder.toString();
     }
 
-    private static String formatFragment(Metadata metadata, CostCalculator costCalculator, Session session, PlanFragment fragment, Optional<StageStats> stageStats, Optional<Map<PlanNodeId, PlanNodeStats>> planNodeStats)
+    private static String formatFragment(Metadata metadata, CostCalculator costCalculator, Session session, PlanFragment fragment, Optional<StageInfo> stageInfo, Optional<Map<PlanNodeId, PlanNodeStats>> planNodeStats, boolean verbose)
     {
         StringBuilder builder = new StringBuilder();
         builder.append(format("Fragment %s [%s]\n",
                 fragment.getId(),
                 fragment.getPartitioning()));
 
-        if (stageStats.isPresent()) {
+        if (stageInfo.isPresent()) {
+            StageStats stageStats = stageInfo.get().getStageStats();
+
+            double avgPositionsPerTask = stageInfo.get().getTasks().stream().mapToLong(task -> task.getStats().getProcessedInputPositions()).average().orElse(Double.NaN);
+            double squaredDifferences = stageInfo.get().getTasks().stream().mapToDouble(task -> Math.pow(task.getStats().getProcessedInputPositions() - avgPositionsPerTask, 2)).sum();
+            double sdAmongTasks = Math.sqrt(squaredDifferences / stageInfo.get().getTasks().size());
+
             builder.append(indentString(1))
-                    .append(format("CPU: %s, Input: %s (%s), Output: %s (%s)\n",
-                            stageStats.get().getTotalCpuTime(),
-                            formatPositions(stageStats.get().getProcessedInputPositions()),
-                            stageStats.get().getProcessedInputDataSize(),
-                            formatPositions(stageStats.get().getOutputPositions()),
-                            stageStats.get().getOutputDataSize()));
+                    .append(format("CPU: %s, Input: %s (%s); per task: avg.: %s std.dev.: %s, Output: %s (%s)\n",
+                            stageStats.getTotalCpuTime(),
+                            formatPositions(stageStats.getProcessedInputPositions()),
+                            stageStats.getProcessedInputDataSize(),
+                            formatDouble(avgPositionsPerTask),
+                            formatDouble(sdAmongTasks),
+                            formatPositions(stageStats.getOutputPositions()),
+                            stageStats.getOutputDataSize()));
         }
 
         PartitioningScheme partitioningScheme = fragment.getPartitioningScheme();
@@ -241,7 +270,7 @@ public class PlanPrinter
                 .map(argument -> {
                     if (argument.isConstant()) {
                         NullableValue constant = argument.getConstant();
-                        String printableValue = castToVarchar(constant.getType(), constant.getValue(), metadata, session);
+                        String printableValue = castToVarchar(constant.getType(), constant.getValue(), metadata.getFunctionRegistry(), session);
                         return constant.getType().getDisplayName() + "(" + printableValue + ")";
                     }
                     return argument.getColumn().toString();
@@ -261,12 +290,12 @@ public class PlanPrinter
                     formatHash(partitioningScheme.getHashColumn())));
         }
 
-        if (stageStats.isPresent()) {
-            builder.append(textLogicalPlan(fragment.getRoot(), fragment.getSymbols(), metadata, costCalculator, session, planNodeStats.get(), 1))
+        if (stageInfo.isPresent()) {
+            builder.append(textLogicalPlan(fragment.getRoot(), fragment.getSymbols(), metadata, costCalculator, session, planNodeStats.get(), 1, verbose))
                     .append("\n");
         }
         else {
-            builder.append(textLogicalPlan(fragment.getRoot(), fragment.getSymbols(), metadata, costCalculator, session, 1))
+            builder.append(textLogicalPlan(fragment.getRoot(), fragment.getSymbols(), metadata, costCalculator, session, 1, verbose))
                     .append("\n");
         }
 
@@ -328,9 +357,9 @@ public class PlanPrinter
             output.append(indentString(indent));
             output.append("Cost: ?");
             if (printInput) {
-                output.append(", Input: ? lines (?B)");
+                output.append(", Input: ? rows (?B)");
             }
-            output.append(", Output: ? lines (?B)");
+            output.append(", Output: ? rows (?B)");
             if (printFiltered) {
                 output.append(", Filtered: ?%");
             }
@@ -357,6 +386,11 @@ public class PlanPrinter
         output.append('\n');
 
         printDistributions(indent, nodeStats);
+
+        if (nodeStats.getWindowOperatorStats().isPresent()) {
+            // TODO: Once PlanNodeStats becomes broken into smaller classes, we should rely on toString() method of WindowOperatorStats here
+            printWindowOperatorStats(indent, nodeStats.getWindowOperatorStats().get());
+        }
     }
 
     private void printDistributions(int indent, PlanNodeStats nodeStats)
@@ -376,7 +410,7 @@ public class PlanPrinter
 
             output.append(indentString(indent));
             output.append(translatedOperatorType);
-            output.append(format(Locale.US, "Input avg.: %s lines, Input std.dev.: %s%%",
+            output.append(format(Locale.US, "Input avg.: %s rows, Input std.dev.: %s%%",
                     formatDouble(inputAverage), formatDouble(100.0d * inputStdDevs.get(operator) / inputAverage)));
             output.append('\n');
 
@@ -422,6 +456,34 @@ public class PlanPrinter
         }
 
         return ImmutableMap.of();
+    }
+
+    private void printWindowOperatorStats(int indent, WindowOperatorStats stats)
+    {
+        if (!verbose) {
+            // these stats are too detailed for non-verbose mode
+            return;
+        }
+
+        output.append(indentString(indent));
+        output.append(format("Active Drivers: [ %d / %d ]", stats.getActiveDrivers(), stats.getTotalDrivers()));
+        output.append('\n');
+
+        output.append(indentString(indent));
+        output.append(format("Index size: std.dev.: %s bytes , %s rows", formatDouble(stats.getIndexSizeStdDev()), formatDouble(stats.getIndexPositionsStdDev())));
+        output.append('\n');
+
+        output.append(indentString(indent));
+        output.append(format("Index count per driver: std.dev.: %s", formatDouble(stats.getIndexCountPerDriverStdDev())));
+        output.append('\n');
+
+        output.append(indentString(indent));
+        output.append(format("Rows per driver: std.dev.: %s", formatDouble(stats.getRowsPerDriverStdDev())));
+        output.append('\n');
+
+        output.append(indentString(indent));
+        output.append(format("Size of partition: std.dev.: %s", formatDouble(stats.getPartitionRowsStdDev())));
+        output.append('\n');
     }
 
     private static String formatDouble(double value)
@@ -476,9 +538,7 @@ public class PlanPrinter
         {
             List<Expression> joinExpressions = new ArrayList<>();
             for (JoinNode.EquiJoinClause clause : node.getCriteria()) {
-                joinExpressions.add(new ComparisonExpression(ComparisonExpressionType.EQUAL,
-                        clause.getLeft().toSymbolReference(),
-                        clause.getRight().toSymbolReference()));
+                joinExpressions.add(clause.toExpression());
             }
             node.getFilter().ifPresent(expression -> joinExpressions.add(expression));
 
@@ -594,12 +654,12 @@ public class PlanPrinter
             printCost(indent + 2, node);
             printStats(indent + 2, node.getId());
 
-            for (Map.Entry<Symbol, FunctionCall> entry : node.getAggregations().entrySet()) {
-                if (node.getMasks().containsKey(entry.getKey())) {
-                    print(indent + 2, "%s := %s (mask = %s)", entry.getKey(), entry.getValue(), node.getMasks().get(entry.getKey()));
+            for (Map.Entry<Symbol, Aggregation> entry : node.getAggregations().entrySet()) {
+                if (entry.getValue().getMask().isPresent()) {
+                    print(indent + 2, "%s := %s (mask = %s)", entry.getKey(), entry.getValue().getCall(), entry.getValue().getMask().get());
                 }
                 else {
-                    print(indent + 2, "%s := %s", entry.getKey(), entry.getValue());
+                    print(indent + 2, "%s := %s", entry.getKey(), entry.getValue().getCall());
                 }
             }
 
@@ -1118,6 +1178,15 @@ public class PlanPrinter
         }
 
         @Override
+        public Void visitLateralJoin(LateralJoinNode node, Integer indent)
+        {
+            print(indent, "- Lateral[%s] => [%s]", node.getCorrelation(), formatOutputs(node.getOutputSymbols()));
+            printStats(indent + 2, node.getId());
+
+            return processChildren(node, indent + 1);
+        }
+
+        @Override
         protected Void visitPlan(PlanNode node, Integer indent)
         {
             throw new UnsupportedOperationException("not yet implemented: " + node.getClass().getName());
@@ -1172,7 +1241,7 @@ public class PlanPrinter
                         for (Range range : ranges.getOrderedRanges()) {
                             StringBuilder builder = new StringBuilder();
                             if (range.isSingleValue()) {
-                                String value = castToVarchar(type, range.getSingleValue(), PlanPrinter.this.metadata, session);
+                                String value = castToVarchar(type, range.getSingleValue(), PlanPrinter.this.metadata.getFunctionRegistry(), session);
                                 builder.append('[').append(value).append(']');
                             }
                             else {
@@ -1182,7 +1251,7 @@ public class PlanPrinter
                                     builder.append("<min>");
                                 }
                                 else {
-                                    builder.append(castToVarchar(type, range.getLow().getValue(), PlanPrinter.this.metadata, session));
+                                    builder.append(castToVarchar(type, range.getLow().getValue(), PlanPrinter.this.metadata.getFunctionRegistry(), session));
                                 }
 
                                 builder.append(", ");
@@ -1191,7 +1260,7 @@ public class PlanPrinter
                                     builder.append("<max>");
                                 }
                                 else {
-                                    builder.append(castToVarchar(type, range.getHigh().getValue(), PlanPrinter.this.metadata, session));
+                                    builder.append(castToVarchar(type, range.getHigh().getValue(), PlanPrinter.this.metadata.getFunctionRegistry(), session));
                                 }
 
                                 builder.append((range.getHigh().getBound() == Marker.Bound.EXACTLY) ? ']' : ')');
@@ -1200,7 +1269,7 @@ public class PlanPrinter
                         }
                     },
                     discreteValues -> discreteValues.getValues().stream()
-                            .map(value -> castToVarchar(type, value, PlanPrinter.this.metadata, session))
+                            .map(value -> castToVarchar(type, value, PlanPrinter.this.metadata.getFunctionRegistry(), session))
                             .sorted() // Sort so the values will be printed in predictable order
                             .forEach(parts::add),
                     allOrNone -> {
@@ -1214,10 +1283,17 @@ public class PlanPrinter
 
         private void printCost(int indent, PlanNode... nodes)
         {
-            String costString = Joiner.on("/").join(Arrays.stream(nodes)
-                    .map(this::formatCost)
-                    .collect(toImmutableList()));
-            print(indent, "Cost: %s", costString);
+            if (Arrays.stream(nodes).anyMatch(this::isKnownCost)) {
+                String costString = Joiner.on("/").join(Arrays.stream(nodes)
+                        .map(this::formatCost)
+                        .collect(toImmutableList()));
+                print(indent, "Cost: %s", costString);
+            }
+        }
+
+        private boolean isKnownCost(PlanNode node)
+        {
+            return !UNKNOWN_COST.equals(costs.getOrDefault(node.getId(), UNKNOWN_COST));
         }
 
         private String formatCost(PlanNode node)
@@ -1264,16 +1340,16 @@ public class PlanPrinter
         return builder.toString();
     }
 
-    private static String castToVarchar(Type type, Object value, Metadata metadata, Session session)
+    private static String castToVarchar(Type type, Object value, FunctionRegistry functionRegistry, Session session)
     {
         if (value == null) {
             return "NULL";
         }
 
-        Signature coercion = metadata.getFunctionRegistry().getCoercion(type, VARCHAR);
+        Signature coercion = functionRegistry.getCoercion(type, VARCHAR);
 
         try {
-            Slice coerced = (Slice) new FunctionInvoker(metadata.getFunctionRegistry()).invoke(coercion, session.toConnectorSession(), value);
+            Slice coerced = (Slice) new FunctionInvoker(functionRegistry).invoke(coercion, session.toConnectorSession(), value);
             return coerced.toStringUtf8();
         }
         catch (OperatorNotFoundException e) {

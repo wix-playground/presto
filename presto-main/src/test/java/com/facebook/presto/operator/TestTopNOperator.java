@@ -25,6 +25,7 @@ import org.testng.annotations.Test;
 
 import java.util.List;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.ScheduledExecutorService;
 
 import static com.facebook.presto.RowPagesBuilder.rowPagesBuilder;
 import static com.facebook.presto.SessionTestUtils.TEST_SESSION;
@@ -41,18 +42,21 @@ import static io.airlift.concurrent.Threads.daemonThreadsNamed;
 import static io.airlift.units.DataSize.Unit.BYTE;
 import static io.airlift.units.DataSize.Unit.MEGABYTE;
 import static java.util.concurrent.Executors.newCachedThreadPool;
+import static java.util.concurrent.Executors.newScheduledThreadPool;
 
 @Test(singleThreaded = true)
 public class TestTopNOperator
 {
     private ExecutorService executor;
+    private ScheduledExecutorService scheduledExecutor;
     private DriverContext driverContext;
 
     @BeforeMethod
     public void setUp()
     {
-        executor = newCachedThreadPool(daemonThreadsNamed("test-%s"));
-        driverContext = createTaskContext(executor, TEST_SESSION)
+        executor = newCachedThreadPool(daemonThreadsNamed("test-executor-%s"));
+        scheduledExecutor = newScheduledThreadPool(2, daemonThreadsNamed("test-scheduledExecutor-%s"));
+        driverContext = createTaskContext(executor, scheduledExecutor, TEST_SESSION)
                 .addPipelineContext(0, true, true)
                 .addDriverContext();
     }
@@ -61,6 +65,7 @@ public class TestTopNOperator
     public void tearDown()
     {
         executor.shutdownNow();
+        scheduledExecutor.shutdownNow();
     }
 
     @Test
@@ -185,16 +190,9 @@ public class TestTopNOperator
                 new DataSize(16, MEGABYTE));
 
         try (Operator operator = factory.createOperator(driverContext)) {
-            MaterializedResult expected = resultBuilder(driverContext.getSession(), BIGINT).build();
-
-            // assertOperatorEquals assumes operators do not start in finished state
             assertEquals(operator.isFinished(), true);
             assertEquals(operator.needsInput(), false);
             assertEquals(operator.getOutput(), null);
-
-            List<Page> pages = OperatorAssertion.toPages(operator, input.iterator());
-            MaterializedResult actual = OperatorAssertion.toMaterializedResult(operator.getOperatorContext().getSession(), operator.getTypes(), pages);
-            assertEquals(actual, expected);
         }
     }
 
@@ -208,7 +206,7 @@ public class TestTopNOperator
                 .row(2L)
                 .build();
 
-        DriverContext smallDiverContext = createTaskContext(executor, TEST_SESSION, new DataSize(1, BYTE))
+        DriverContext smallDiverContext = createTaskContext(executor, scheduledExecutor, TEST_SESSION, new DataSize(1, BYTE))
                 .addPipelineContext(0, true, true)
                 .addDriverContext();
 

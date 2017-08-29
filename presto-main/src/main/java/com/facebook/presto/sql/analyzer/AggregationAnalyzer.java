@@ -375,7 +375,12 @@ class AggregationAnalyzer
         @Override
         protected Boolean visitBindExpression(BindExpression node, Void context)
         {
-            return process(node.getValue(), context) && process(node.getFunction(), context);
+            for (Expression value : node.getValues()) {
+                if (!process(value, context)) {
+                    return false;
+                }
+            }
+            return process(node.getFunction(), context);
         }
 
         @Override
@@ -581,8 +586,7 @@ class AggregationAnalyzer
                 node.getGroupingColumns().forEach(groupingColumn -> verifyNoOrderByReferencesToOutputColumns(
                         groupingColumn,
                         REFERENCE_TO_OUTPUT_ATTRIBUTE_WITHIN_ORDER_BY_GROUPING,
-                        "Invalid reference to output of SELECT clause from grouping() expression in ORDER BY"
-                ));
+                        "Invalid reference to output of SELECT clause from grouping() expression in ORDER BY"));
             }
 
             Optional<Expression> argumentNotInGroupBy = node.getGroupingColumns().stream()
@@ -593,8 +597,7 @@ class AggregationAnalyzer
                         INVALID_PROCEDURE_ARGUMENTS,
                         node,
                         "The arguments to GROUPING() must be expressions referenced by the GROUP BY at the associated query level. Mismatch due to %s.",
-                        argumentNotInGroupBy.get()
-                );
+                        argumentNotInGroupBy.get());
             }
             return true;
         }

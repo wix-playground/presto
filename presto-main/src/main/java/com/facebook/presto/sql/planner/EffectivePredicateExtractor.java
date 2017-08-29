@@ -16,7 +16,6 @@ package com.facebook.presto.sql.planner;
 import com.facebook.presto.spi.ColumnHandle;
 import com.facebook.presto.spi.predicate.Domain;
 import com.facebook.presto.spi.predicate.TupleDomain;
-import com.facebook.presto.spi.type.Type;
 import com.facebook.presto.sql.planner.plan.AggregationNode;
 import com.facebook.presto.sql.planner.plan.DistinctLimitNode;
 import com.facebook.presto.sql.planner.plan.ExchangeNode;
@@ -69,9 +68,9 @@ import static com.google.common.collect.ImmutableList.toImmutableList;
 public class EffectivePredicateExtractor
         extends PlanVisitor<Expression, Void>
 {
-    public static Expression extract(PlanNode node, Map<Symbol, Type> symbolTypes)
+    public static Expression extract(PlanNode node)
     {
-        return node.accept(new EffectivePredicateExtractor(symbolTypes), null);
+        return node.accept(new EffectivePredicateExtractor(), null);
     }
 
     private static final Predicate<Map.Entry<Symbol, ? extends Expression>> SYMBOL_MATCHES_EXPRESSION =
@@ -85,13 +84,6 @@ public class EffectivePredicateExtractor
                 // TODO: switch this to 'IS NOT DISTINCT FROM' syntax when EqualityInference properly supports it
                 return new ComparisonExpression(ComparisonExpressionType.EQUAL, reference, expression);
             };
-
-    private final Map<Symbol, Type> symbolTypes;
-
-    public EffectivePredicateExtractor(Map<Symbol, Type> symbolTypes)
-    {
-        this.symbolTypes = symbolTypes;
-    }
 
     @Override
     protected Expression visitPlan(PlanNode node, Void context)
@@ -224,12 +216,9 @@ public class EffectivePredicateExtractor
         Expression leftPredicate = node.getLeft().accept(this, context);
         Expression rightPredicate = node.getRight().accept(this, context);
 
-        List<Expression> joinConjuncts = new ArrayList<>();
-        for (JoinNode.EquiJoinClause clause : node.getCriteria()) {
-            joinConjuncts.add(new ComparisonExpression(ComparisonExpressionType.EQUAL,
-                    clause.getLeft().toSymbolReference(),
-                    clause.getRight().toSymbolReference()));
-        }
+        List<Expression> joinConjuncts = node.getCriteria().stream()
+                .map(JoinNode.EquiJoinClause::toExpression)
+                .collect(toImmutableList());
 
         switch (node.getType()) {
             case INNER:
@@ -266,7 +255,7 @@ public class EffectivePredicateExtractor
         // Conjuncts without any symbol dependencies cannot be applied to the effective predicate (e.g. FALSE literal)
         return conjuncts.stream()
                 .map(expression -> pullExpressionThroughSymbols(expression, outputSymbols))
-                .map(expression -> DependencyExtractor.extractAll(expression).isEmpty() ? TRUE_LITERAL : expression)
+                .map(expression -> SymbolsExtractor.extractAll(expression).isEmpty() ? TRUE_LITERAL : expression)
                 .map(expressionOrNullSymbols(nullSymbolScopes))
                 .collect(toImmutableList());
     }

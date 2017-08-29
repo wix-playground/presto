@@ -13,11 +13,10 @@
  */
 package com.facebook.presto.sql.planner.iterative.rule;
 
-import com.facebook.presto.Session;
-import com.facebook.presto.sql.planner.PlanNodeIdAllocator;
+import com.facebook.presto.matching.Capture;
+import com.facebook.presto.matching.Captures;
+import com.facebook.presto.matching.Pattern;
 import com.facebook.presto.sql.planner.Symbol;
-import com.facebook.presto.sql.planner.SymbolAllocator;
-import com.facebook.presto.sql.planner.iterative.Lookup;
 import com.facebook.presto.sql.planner.iterative.Rule;
 import com.facebook.presto.sql.planner.plan.PlanNode;
 import com.facebook.presto.sql.planner.plan.WindowNode;
@@ -25,26 +24,29 @@ import com.google.common.collect.ImmutableMap;
 
 import java.util.Optional;
 
+import static com.facebook.presto.matching.Capture.newCapture;
 import static com.facebook.presto.sql.planner.optimizations.WindowNodeUtil.dependsOn;
+import static com.facebook.presto.sql.planner.plan.Patterns.source;
+import static com.facebook.presto.sql.planner.plan.Patterns.window;
 
 public class MergeAdjacentWindows
-    implements Rule
+        implements Rule<WindowNode>
 {
+    private static final Capture<WindowNode> CHILD = newCapture();
+
+    private static final Pattern<WindowNode> PATTERN = window()
+            .with(source().matching(window().capturedAs(CHILD)));
+
     @Override
-    public Optional<PlanNode> apply(PlanNode node, Lookup lookup, PlanNodeIdAllocator idAllocator, SymbolAllocator symbolAllocator, Session session)
+    public Pattern<WindowNode> getPattern()
     {
-        if (!(node instanceof WindowNode)) {
-            return Optional.empty();
-        }
+        return PATTERN;
+    }
 
-        WindowNode parent = (WindowNode) node;
-
-        PlanNode source = lookup.resolve(parent.getSource());
-        if (!(source instanceof WindowNode)) {
-            return Optional.empty();
-        }
-
-        WindowNode child = (WindowNode) source;
+    @Override
+    public Optional<PlanNode> apply(WindowNode parent, Captures captures, Context context)
+    {
+        WindowNode child = captures.get(CHILD);
 
         if (!child.getSpecification().equals(parent.getSpecification()) || dependsOn(parent, child)) {
             return Optional.empty();

@@ -15,10 +15,10 @@ package com.facebook.presto.sql.planner.iterative.rule;
 
 import com.facebook.presto.Session;
 import com.facebook.presto.SystemSessionProperties;
+import com.facebook.presto.matching.Captures;
+import com.facebook.presto.matching.Pattern;
 import com.facebook.presto.sql.planner.PlanNodeIdAllocator;
 import com.facebook.presto.sql.planner.Symbol;
-import com.facebook.presto.sql.planner.SymbolAllocator;
-import com.facebook.presto.sql.planner.iterative.Lookup;
 import com.facebook.presto.sql.planner.iterative.Rule;
 import com.facebook.presto.sql.planner.optimizations.joins.JoinGraph;
 import com.facebook.presto.sql.planner.plan.Assignments;
@@ -29,8 +29,8 @@ import com.facebook.presto.sql.planner.plan.PlanNodeId;
 import com.facebook.presto.sql.planner.plan.ProjectNode;
 import com.facebook.presto.sql.tree.Expression;
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableSet;
 
-import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -39,26 +39,35 @@ import java.util.Optional;
 import java.util.PriorityQueue;
 import java.util.Set;
 
+import static com.facebook.presto.sql.planner.iterative.rule.Util.restrictOutputs;
+import static com.facebook.presto.sql.planner.plan.Patterns.join;
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkState;
 import static com.google.common.collect.ImmutableList.toImmutableList;
+import static java.util.Comparator.comparing;
 import static java.util.Objects.requireNonNull;
 
 public class EliminateCrossJoins
-        implements Rule
+        implements Rule<JoinNode>
 {
+    private static final Pattern<JoinNode> PATTERN = join();
+
     @Override
-    public Optional<PlanNode> apply(PlanNode node, Lookup lookup, PlanNodeIdAllocator idAllocator, SymbolAllocator symbolAllocator, Session session)
+    public Pattern<JoinNode> getPattern()
     {
-        if (!(node instanceof JoinNode)) {
-            return Optional.empty();
-        }
+        return PATTERN;
+    }
 
-        if (!SystemSessionProperties.isJoinReorderingEnabled(session)) {
-            return Optional.empty();
-        }
+    @Override
+    public boolean isEnabled(Session session)
+    {
+        return SystemSessionProperties.isJoinReorderingEnabled(session);
+    }
 
-        JoinGraph joinGraph = JoinGraph.buildShallowFrom(node, lookup);
+    @Override
+    public Optional<PlanNode> apply(JoinNode node, Captures captures, Context context)
+    {
+        JoinGraph joinGraph = JoinGraph.buildShallowFrom(node, context.getLookup());
         if (joinGraph.size() < 3) {
             return Optional.empty();
         }
@@ -68,7 +77,7 @@ public class EliminateCrossJoins
             return Optional.empty();
         }
 
-        PlanNode replacement = buildJoinTree(node.getOutputSymbols(), joinGraph, joinOrder, idAllocator);
+        PlanNode replacement = buildJoinTree(node.getOutputSymbols(), joinGraph, joinOrder, context.getIdAllocator());
         return Optional.of(replacement);
     }
 
@@ -100,7 +109,7 @@ public class EliminateCrossJoins
 
         PriorityQueue<PlanNode> nodesToVisit = new PriorityQueue<>(
                 graph.size(),
-                (Comparator<PlanNode>) (node1, node2) -> priorities.get(node1.getId()).compareTo(priorities.get(node2.getId())));
+                comparing(node -> priorities.get(node.getId())));
         Set<PlanNode> visited = new HashSet<>();
 
         nodesToVisit.add(graph.getNode(0));
@@ -191,15 +200,8 @@ public class EliminateCrossJoins
                     Assignments.copyOf(graph.getAssignments().get()));
         }
 
-        if (!result.getOutputSymbols().equals(expectedOutputSymbols)) {
-            // Introduce a projection to constrain the outputs to what was originally expected
-            // Some nodes are sensitive to what's produced (e.g., DistinctLimit node)
-            result = new ProjectNode(
-                    idAllocator.getNextId(),
-                    result,
-                    Assignments.identity(expectedOutputSymbols));
-        }
-
-        return result;
+        // If needed, introduce a projection to constrain the outputs to what was originally expected
+        // Some nodes are sensitive to what's produced (e.g., DistinctLimit node)
+        return restrictOutputs(idAllocator, result, ImmutableSet.copyOf(expectedOutputSymbols)).orElse(result);
     }
 }

@@ -858,7 +858,7 @@ let QueryDetail = React.createClass({
                 for (let property in query.session.catalogProperties[catalog]) {
                     if (query.session.catalogProperties[catalog].hasOwnProperty(property)) {
                         properties.push(
-                            <span>- { catalog + "." + property + "=" + query.session.catalogProperties[catalog][property] } </span>
+                            <span>- { catalog + "." + property + "=" + query.session.catalogProperties[catalog][property] } <br /></span>
                         );
                     }
                 }
@@ -1215,6 +1215,38 @@ let QueryDetail = React.createClass({
                                             </td>
                                             <td className="info-text">
                                                 { formatDataSizeBytes(query.queryStats.cumulativeMemory / 1000.0, "") + " seconds" }
+                                            </td>
+                                        </tr>
+                                        <tr>
+                                            <td className="info-title">
+                                                Output Rows
+                                            </td>
+                                            <td className="info-text">
+                                                { formatCount(query.queryStats.outputPositions) }
+                                            </td>
+                                        </tr>
+                                        <tr>
+                                            <td className="info-title">
+                                                Output Data
+                                            </td>
+                                            <td className="info-text">
+                                                { query.queryStats.outputDataSize }
+                                            </td>
+                                        </tr>
+                                        <tr>
+                                            <td className="info-title">
+                                                Written Rows
+                                            </td>
+                                            <td className="info-text">
+                                                { formatCount(query.queryStats.writtenPositions) }
+                                            </td>
+                                        </tr>
+                                        <tr>
+                                            <td className="info-title">
+                                                Written Data
+                                            </td>
+                                            <td className="info-text">
+                                                { query.queryStats.writtenDataSize }
                                             </td>
                                         </tr>
                                     </tbody>

@@ -44,6 +44,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.Random;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.ScheduledExecutorService;
 
 import static com.facebook.presto.RowPagesBuilder.rowPagesBuilder;
 import static com.facebook.presto.SessionTestUtils.TEST_SESSION;
@@ -53,7 +54,9 @@ import static io.airlift.concurrent.Threads.daemonThreadsNamed;
 import static io.airlift.units.DataSize.Unit.GIGABYTE;
 import static java.lang.String.format;
 import static java.util.concurrent.Executors.newCachedThreadPool;
+import static java.util.concurrent.Executors.newScheduledThreadPool;
 import static java.util.concurrent.TimeUnit.MILLISECONDS;
+import static java.util.concurrent.TimeUnit.SECONDS;
 import static org.openjdk.jmh.annotations.Mode.AverageTime;
 import static org.openjdk.jmh.annotations.Scope.Thread;
 
@@ -63,7 +66,7 @@ import static org.openjdk.jmh.annotations.Scope.Thread;
 @BenchmarkMode(AverageTime)
 @Fork(3)
 @Warmup(iterations = 5)
-@Measurement(iterations = 20)
+@Measurement(iterations = 10, time = 2, timeUnit = SECONDS)
 public class BenchmarkHashBuildAndJoinOperators
 {
     private static final int HASH_BUILD_OPERATOR_ID = 1;
@@ -75,18 +78,19 @@ public class BenchmarkHashBuildAndJoinOperators
     public static class BuildContext
     {
         protected static final int ROWS_PER_PAGE = 1024;
-        protected static final int BUILD_ROWS_NUMBER = 700_000;
+        protected static final int BUILD_ROWS_NUMBER = 8_000_000;
 
         @Param({"varchar", "bigint", "all"})
-        protected String hashColumns;
+        protected String hashColumns = "bigint";
 
         @Param({"false", "true"})
-        protected boolean buildHashEnabled;
+        protected boolean buildHashEnabled = false;
 
         @Param({"1", "5"})
-        protected int buildRowsRepetition;
+        protected int buildRowsRepetition = 1;
 
         protected ExecutorService executor;
+        protected ScheduledExecutorService scheduledExecutor;
         protected List<Page> buildPages;
         protected Optional<Integer> hashChannel;
         protected List<Type> types;
@@ -108,14 +112,15 @@ public class BenchmarkHashBuildAndJoinOperators
                 default:
                     throw new UnsupportedOperationException(format("Unknown hashColumns value [%s]", hashColumns));
             }
-            executor = newCachedThreadPool(daemonThreadsNamed("test-%s"));
+            executor = newCachedThreadPool(daemonThreadsNamed("test-executor-%s"));
+            scheduledExecutor = newScheduledThreadPool(2, daemonThreadsNamed("test-scheduledExecutor-%s"));
 
             initializeBuildPages();
         }
 
         public TaskContext createTaskContext()
         {
-            return TestingTaskContext.createTaskContext(executor, TEST_SESSION, new DataSize(2, GIGABYTE));
+            return TestingTaskContext.createTaskContext(executor, scheduledExecutor, TEST_SESSION, new DataSize(2, GIGABYTE));
         }
 
         public Optional<Integer> getHashChannel()
@@ -161,13 +166,13 @@ public class BenchmarkHashBuildAndJoinOperators
     public static class JoinContext
             extends BuildContext
     {
-        protected static final int PROBE_ROWS_NUMBER = 700_000;
+        protected static final int PROBE_ROWS_NUMBER = 1_400_000;
 
         @Param({"0.1", "1", "2"})
-        protected double matchRate;
+        protected double matchRate = 1;
 
         @Param({"bigint", "all"})
-        protected String outputColumns;
+        protected String outputColumns = "bigint";
 
         protected List<Page> probePages;
         protected List<Integer> outputChannels;

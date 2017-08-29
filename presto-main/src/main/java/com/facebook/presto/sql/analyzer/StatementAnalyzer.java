@@ -29,13 +29,16 @@ import com.facebook.presto.spi.ColumnHandle;
 import com.facebook.presto.spi.ColumnMetadata;
 import com.facebook.presto.spi.PrestoException;
 import com.facebook.presto.spi.security.Identity;
+import com.facebook.presto.spi.type.ArrayType;
+import com.facebook.presto.spi.type.MapType;
+import com.facebook.presto.spi.type.RowType;
 import com.facebook.presto.spi.type.Type;
 import com.facebook.presto.spi.type.TypeSignature;
 import com.facebook.presto.sql.ExpressionUtils;
 import com.facebook.presto.sql.parser.ParsingException;
 import com.facebook.presto.sql.parser.SqlParser;
-import com.facebook.presto.sql.planner.DependencyExtractor;
 import com.facebook.presto.sql.planner.ExpressionInterpreter;
+import com.facebook.presto.sql.planner.SymbolsExtractor;
 import com.facebook.presto.sql.tree.AddColumn;
 import com.facebook.presto.sql.tree.AliasedRelation;
 import com.facebook.presto.sql.tree.AllColumns;
@@ -50,6 +53,7 @@ import com.facebook.presto.sql.tree.Deallocate;
 import com.facebook.presto.sql.tree.DefaultTraversalVisitor;
 import com.facebook.presto.sql.tree.Delete;
 import com.facebook.presto.sql.tree.DereferenceExpression;
+import com.facebook.presto.sql.tree.DropColumn;
 import com.facebook.presto.sql.tree.DropSchema;
 import com.facebook.presto.sql.tree.DropTable;
 import com.facebook.presto.sql.tree.DropView;
@@ -73,6 +77,7 @@ import com.facebook.presto.sql.tree.Join;
 import com.facebook.presto.sql.tree.JoinCriteria;
 import com.facebook.presto.sql.tree.JoinOn;
 import com.facebook.presto.sql.tree.JoinUsing;
+import com.facebook.presto.sql.tree.Lateral;
 import com.facebook.presto.sql.tree.LongLiteral;
 import com.facebook.presto.sql.tree.NaturalJoin;
 import com.facebook.presto.sql.tree.Node;
@@ -109,9 +114,6 @@ import com.facebook.presto.sql.tree.WindowFrame;
 import com.facebook.presto.sql.tree.With;
 import com.facebook.presto.sql.tree.WithQuery;
 import com.facebook.presto.sql.util.AstUtils;
-import com.facebook.presto.type.ArrayType;
-import com.facebook.presto.type.MapType;
-import com.facebook.presto.type.RowType;
 import com.google.common.base.Joiner;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
@@ -194,6 +196,7 @@ import static com.google.common.collect.Iterables.getLast;
 import static com.google.common.collect.Iterables.transform;
 import static java.lang.Math.toIntExact;
 import static java.util.Collections.emptyList;
+import static java.util.Locale.ENGLISH;
 import static java.util.Objects.requireNonNull;
 
 class StatementAnalyzer
@@ -299,6 +302,7 @@ class StatementAnalyzer
             List<String> insertColumns;
             if (insert.getColumns().isPresent()) {
                 insertColumns = insert.getColumns().get().stream()
+                        .map(Identifier::getValue)
                         .map(String::toLowerCase)
                         .collect(toImmutableList());
 
@@ -408,6 +412,8 @@ class StatementAnalyzer
                         .analyze(expression, createScope(scope));
             }
             analysis.setCreateTableProperties(node.getProperties());
+
+            node.getColumnAliases().ifPresent(analysis::setCreateTableColumnAliases);
             analysis.setCreateTableComment(node.getComment());
 
             accessControl.checkCanCreateTable(session.getRequiredTransactionId(), session.getIdentity(), targetTable);
@@ -417,7 +423,19 @@ class StatementAnalyzer
             // analyze the query that creates the table
             Scope queryScope = process(node.getQuery(), scope);
 
-            validateColumns(node, queryScope.getRelationType());
+            if (node.getColumnAliases().isPresent()) {
+                validateColumnAliases(node.getColumnAliases().get(), queryScope.getRelationType().getVisibleFieldCount());
+
+                // analzie only column types in subquery if column alias exists
+                for (Field field : queryScope.getRelationType().getVisibleFields()) {
+                    if (field.getType().equals(UNKNOWN)) {
+                        throw new SemanticException(COLUMN_TYPE_UNKNOWN, node, "Column type is unknown at position %s", queryScope.getRelationType().indexOf(field) + 1);
+                    }
+                }
+            }
+            else {
+                validateColumns(node, queryScope.getRelationType());
+            }
 
             return createAndAssignScope(node, scope, Field.newUnqualified("rows", BIGINT));
         }
@@ -507,6 +525,12 @@ class StatementAnalyzer
         }
 
         @Override
+        protected Scope visitDropColumn(DropColumn node, Optional<Scope> scope)
+        {
+            return createAndAssignScope(node, scope);
+        }
+
+        @Override
         protected Scope visitDropView(DropView node, Optional<Scope> scope)
         {
             return createAndAssignScope(node, scope);
@@ -585,6 +609,25 @@ class StatementAnalyzer
             }
         }
 
+        private void validateColumnAliases(List<Identifier> columnAliases, int sourceColumnSize)
+        {
+            if (columnAliases.size() != sourceColumnSize) {
+                throw new SemanticException(
+                        MISMATCHED_COLUMN_ALIASES,
+                        columnAliases.get(0),
+                        "Column alias list has %s entries but subquery has %s columns",
+                        columnAliases.size(),
+                        sourceColumnSize);
+            }
+            Set<String> names = new HashSet<>();
+            for (Identifier identifier : columnAliases) {
+                if (names.contains(identifier.getValue().toLowerCase(ENGLISH))) {
+                    throw new SemanticException(DUPLICATE_COLUMN_NAME, identifier, "Column name '%s' specified more than once", identifier.getValue());
+                }
+                names.add(identifier.getValue().toLowerCase(ENGLISH));
+            }
+        }
+
         @Override
         protected Scope visitExplain(Explain node, Optional<Scope> scope)
                 throws SemanticException
@@ -646,6 +689,14 @@ class StatementAnalyzer
         }
 
         @Override
+        protected Scope visitLateral(Lateral node, Optional<Scope> scope)
+        {
+            StatementAnalyzer analyzer = new StatementAnalyzer(analysis, metadata, sqlParser, accessControl, session);
+            Scope queryScope = analyzer.analyze(node.getQuery(), scope);
+            return createAndAssignScope(node, scope, queryScope.getRelationType());
+        }
+
+        @Override
         protected Scope visitTable(Table table, Optional<Scope> scope)
         {
             if (!table.getName().getPrefix().isPresent()) {
@@ -661,17 +712,17 @@ class StatementAnalyzer
                     RelationType queryDescriptor = analysis.getOutputDescriptor(query);
 
                     List<Field> fields;
-                    Optional<List<String>> columnNames = withQuery.get().getColumnNames();
+                    Optional<List<Identifier>> columnNames = withQuery.get().getColumnNames();
                     if (columnNames.isPresent()) {
                         // if columns are explicitly aliased -> WITH cte(alias1, alias2 ...)
                         ImmutableList.Builder<Field> fieldBuilder = ImmutableList.builder();
 
                         int field = 0;
-                        for (String columnName : columnNames.get()) {
+                        for (Identifier columnName : columnNames.get()) {
                             Field inputField = queryDescriptor.getFieldByIndex(field);
                             fieldBuilder.add(Field.newQualified(
                                     QualifiedName.of(name),
-                                    Optional.of(columnName),
+                                    Optional.of(columnName.getValue()),
                                     inputField.getType(),
                                     false,
                                     inputField.getOriginTable(),
@@ -796,14 +847,22 @@ class StatementAnalyzer
                 }
             }
 
-            RelationType descriptor = relationType.withAlias(relation.getAlias(), relation.getColumnNames());
+            List<String> aliases = null;
+            if (relation.getColumnNames() != null) {
+                aliases = relation.getColumnNames().stream()
+                        .map(Identifier::getValue)
+                        .collect(Collectors.toList());
+            }
+
+            RelationType descriptor = relationType.withAlias(relation.getAlias().getValue(), aliases);
+
             return createAndAssignScope(relation, scope, descriptor);
         }
 
         @Override
         protected Scope visitSampledRelation(SampledRelation relation, Optional<Scope> scope)
         {
-            if (!DependencyExtractor.extractNames(relation.getSamplePercentage(), analysis.getColumnReferences()).isEmpty()) {
+            if (!SymbolsExtractor.extractNames(relation.getSamplePercentage(), analysis.getColumnReferences()).isEmpty()) {
                 throw new SemanticException(NON_NUMERIC_SAMPLE_PERCENTAGE, relation.getSamplePercentage(), "Sample percentage cannot contain column references");
             }
 
@@ -891,7 +950,7 @@ class StatementAnalyzer
                 // Original ORDER BY scope "sees" FROM query fields. However, during planning
                 // and when aggregation is present, ORDER BY expressions should only be resolvable against
                 // output scope, group by expressions and aggregation expressions.
-                computeAndAssignOrderByScopeWithAggregation(node.getOrderBy().get(), outputScope, aggregations, groupByExpressions, analysis.getGroupingOperations(node));
+                computeAndAssignOrderByScopeWithAggregation(node.getOrderBy().get(), sourceScope, outputScope, aggregations, groupByExpressions, analysis.getGroupingOperations(node));
             }
 
             return outputScope;
@@ -926,6 +985,7 @@ class StatementAnalyzer
             expressions.addAll(orderByExpressions);
             node.getHaving().ifPresent(expressions::add);
 
+            analyzeGroupingOperations(node, expressions, emptyList());
             analyzeAggregations(node, sourceScope, Optional.empty(), groupByExpressions, expressions, emptyList());
             analysis.setWindowFunctions(node, analyzeWindowFunctions(node, expressions));
 
@@ -951,7 +1011,7 @@ class StatementAnalyzer
                 int outputFieldSize = outputFieldTypes.length;
                 RelationType relationType = relationScope.getRelationType();
                 int descFieldSize = relationType.getVisibleFields().size();
-                String setOperationName = node.getClass().getSimpleName();
+                String setOperationName = node.getClass().getSimpleName().toUpperCase(ENGLISH);
                 if (outputFieldSize != descFieldSize) {
                     throw new SemanticException(MISMATCHED_SET_COLUMN_TYPES,
                             node,
@@ -965,7 +1025,7 @@ class StatementAnalyzer
                         throw new SemanticException(TYPE_MISMATCH,
                                 node,
                                 "column %d in %s query has incompatible types: %s, %s",
-                                i, outputFieldTypes[i].getDisplayName(), setOperationName, descFieldType.getDisplayName());
+                                i, setOperationName, outputFieldTypes[i].getDisplayName(), descFieldType.getDisplayName());
                     }
                     outputFieldTypes[i] = commonSuperType.get();
                 }
@@ -1029,7 +1089,7 @@ class StatementAnalyzer
             }
 
             Scope left = process(node.getLeft(), scope);
-            Scope right = process(node.getRight(), isUnnestRelation(node.getRight()) ? Optional.of(left) : scope);
+            Scope right = process(node.getRight(), isLateralRelation(node.getRight()) ? Optional.of(left) : scope);
 
             Scope output = createAndAssignScope(node, scope, left.getRelationType().joinWith(right.getRelationType()));
 
@@ -1039,12 +1099,12 @@ class StatementAnalyzer
 
             if (criteria instanceof JoinUsing) {
                 // TODO: implement proper "using" semantics with respect to output columns
-                List<String> columns = ((JoinUsing) criteria).getColumns();
+                List<Identifier> columns = ((JoinUsing) criteria).getColumns();
 
                 List<Expression> expressions = new ArrayList<>();
-                for (String column : columns) {
-                    Expression leftExpression = new Identifier(column);
-                    Expression rightExpression = new Identifier(column);
+                for (Identifier column : columns) {
+                    Expression leftExpression = new Identifier(column.getValue());
+                    Expression rightExpression = new Identifier(column.getValue());
 
                     ExpressionAnalysis leftExpressionAnalysis = analyzeExpression(leftExpression, left);
                     ExpressionAnalysis rightExpressionAnalysis = analyzeExpression(rightExpression, right);
@@ -1085,12 +1145,12 @@ class StatementAnalyzer
             return output;
         }
 
-        private boolean isUnnestRelation(Relation node)
+        private boolean isLateralRelation(Relation node)
         {
             if (node instanceof AliasedRelation) {
-                return isUnnestRelation(((AliasedRelation) node).getRelation());
+                return isLateralRelation(((AliasedRelation) node).getRelation());
             }
-            return node instanceof Unnest;
+            return node instanceof Unnest || node instanceof Lateral;
         }
 
         private void addCoercionForJoinCriteria(Join node, Expression leftExpression, Expression rightExpression)
@@ -1298,9 +1358,9 @@ class StatementAnalyzer
                 ImmutableMultimap.Builder<QualifiedName, Expression> byAliasBuilder = ImmutableMultimap.builder();
                 for (SelectItem item : node.getSelect().getSelectItems()) {
                     if (item instanceof SingleColumn) {
-                        Optional<String> alias = ((SingleColumn) item).getAlias();
+                        Optional<Identifier> alias = ((SingleColumn) item).getAlias();
                         if (alias.isPresent()) {
-                            byAliasBuilder.put(QualifiedName.of(alias.get()), ((SingleColumn) item).getExpression()); // TODO: need to know if alias was quoted
+                            byAliasBuilder.put(QualifiedName.of(alias.get().getValue()), ((SingleColumn) item).getExpression()); // TODO: need to know if alias was quoted
                         }
                     }
                 }
@@ -1313,7 +1373,7 @@ class StatementAnalyzer
                     if (expression instanceof Identifier) {
                         // if this is a simple name reference, try to resolve against output columns
 
-                        QualifiedName name = QualifiedName.of(((Identifier) expression).getName());
+                        QualifiedName name = QualifiedName.of(((Identifier) expression).getValue());
                         Collection<Expression> expressions = byAlias.get(name);
                         if (expressions.size() > 1) {
                             throw new SemanticException(AMBIGUOUS_ATTRIBUTE, expression, "'%s' in ORDER BY is ambiguous", name.getSuffix());
@@ -1373,12 +1433,12 @@ class StatementAnalyzer
             for (SelectItem item : node.getSelectItems()) {
                 if (item instanceof SingleColumn) {
                     SingleColumn column = (SingleColumn) item;
-                    Optional<String> alias = column.getAlias();
+                    Optional<Identifier> alias = column.getAlias();
                     if (alias.isPresent()) {
-                        assignments.put(QualifiedName.of(alias.get()), column.getExpression()); // TODO: need to know if alias was quoted
+                        assignments.put(QualifiedName.of(alias.get().getValue()), column.getExpression()); // TODO: need to know if alias was quoted
                     }
                     else if (column.getExpression() instanceof Identifier) {
-                        assignments.put(QualifiedName.of(((Identifier) column.getExpression()).getName()), column.getExpression());
+                        assignments.put(QualifiedName.of(((Identifier) column.getExpression()).getValue()), column.getExpression());
                     }
                 }
             }
@@ -1400,7 +1460,7 @@ class StatementAnalyzer
             public Expression rewriteIdentifier(Identifier reference, Void context, ExpressionTreeRewriter<Void> treeRewriter)
             {
                 // if this is a simple name reference, try to resolve against output columns
-                QualifiedName name = QualifiedName.of(reference.getName());
+                QualifiedName name = QualifiedName.of(reference.getValue());
                 Set<Expression> expressions = assignments.get(name)
                         .stream()
                         .collect(Collectors.toSet());
@@ -1525,13 +1585,13 @@ class StatementAnalyzer
                     SingleColumn column = (SingleColumn) item;
 
                     Expression expression = column.getExpression();
-                    Optional<String> fieldName = column.getAlias();
+                    Optional<Identifier> field = column.getAlias();
 
                     Optional<QualifiedObjectName> originTable = Optional.empty();
                     QualifiedName name = null;
 
                     if (expression instanceof Identifier) {
-                        name = QualifiedName.of(((Identifier) expression).getName());
+                        name = QualifiedName.of(((Identifier) expression).getValue());
                     }
                     else if (expression instanceof DereferenceExpression) {
                         name = DereferenceExpression.getQualifiedName((DereferenceExpression) expression);
@@ -1544,13 +1604,13 @@ class StatementAnalyzer
                         }
                     }
 
-                    if (!fieldName.isPresent()) {
+                    if (!field.isPresent()) {
                         if (name != null) {
-                            fieldName = Optional.of(getLast(name.getOriginalParts()));
+                            field = Optional.of(new Identifier(getLast(name.getOriginalParts())));
                         }
                     }
 
-                    outputFields.add(Field.newUnqualified(fieldName, analysis.getType(expression), originTable, column.getAlias().isPresent())); // TODO don't use analysis as a side-channel. Use outputExpressions to look up the type
+                    outputFields.add(Field.newUnqualified(field.map(Identifier::getValue), analysis.getType(expression), originTable, column.getAlias().isPresent())); // TODO don't use analysis as a side-channel. Use outputExpressions to look up the type
                 }
                 else {
                     throw new IllegalArgumentException("Unsupported SelectItem type: " + item.getClass().getName());
@@ -1571,7 +1631,7 @@ class StatementAnalyzer
             return orderByScope;
         }
 
-        private Scope computeAndAssignOrderByScopeWithAggregation(OrderBy node, Scope outputScope, List<FunctionCall> aggregations, List<List<Expression>> groupByExpressions, List<GroupingOperation> groupingOperations)
+        private Scope computeAndAssignOrderByScopeWithAggregation(OrderBy node, Scope sourceScope, Scope outputScope, List<FunctionCall> aggregations, List<List<Expression>> groupByExpressions, List<GroupingOperation> groupingOperations)
         {
             // This scope is only used for planning. When aggregation is present then
             // only output fields, groups and aggregation expressions should be visible from ORDER BY expression
@@ -1582,20 +1642,27 @@ class StatementAnalyzer
             orderByAggregationExpressionsBuilder.addAll(aggregations);
             orderByAggregationExpressionsBuilder.addAll(groupingOperations);
 
-            // Don't add aggregate expression that contains references to output column because the names would clash in TranslationMap during planning.
+            // Don't add aggregate complex expressions that contains references to output column because the names would clash in TranslationMap during planning.
             List<Expression> orderByExpressionsReferencingOutputScope = AstUtils.preOrder(node)
                     .filter(Expression.class::isInstance)
                     .map(Expression.class::cast)
                     .filter(expression -> hasReferencesToScope(expression, analysis, outputScope))
                     .collect(toImmutableList());
             List<Expression> orderByAggregationExpressions = orderByAggregationExpressionsBuilder.build().stream()
-                    .filter(expression -> !orderByExpressionsReferencingOutputScope.contains(expression))
+                    .filter(expression -> !orderByExpressionsReferencingOutputScope.contains(expression) || analysis.getColumnReferences().contains(NodeRef.of(expression)))
                     .collect(toImmutableList());
 
             // generate placeholder fields
+            Set<Field> seen = new HashSet<>();
             List<Field> orderByAggregationSourceFields = orderByAggregationExpressions.stream()
-                    .map(analysis::getType)
-                    .map(type -> Field.newUnqualified(Optional.empty(), type))
+                    .map(expression -> {
+                        // generate qualified placeholder field for GROUP BY expressions that are column references
+                        Optional<Field> sourceField = sourceScope.tryResolveField(expression)
+                                .filter(resolvedField -> seen.add(resolvedField.getField()))
+                                .map(ResolvedField::getField);
+                        return sourceField
+                                .orElse(Field.newUnqualified(Optional.empty(), analysis.getType(expression)));
+                    })
                     .collect(toImmutableList());
 
             Scope orderByAggregationScope = Scope.builder()
@@ -1868,14 +1935,14 @@ class StatementAnalyzer
                 Query query = withQuery.getQuery();
                 process(query, withScopeBuilder.build());
 
-                String name = withQuery.getName();
+                String name = withQuery.getName().getValue().toLowerCase(ENGLISH);
                 if (withScopeBuilder.containsNamedQuery(name)) {
                     throw new SemanticException(DUPLICATE_RELATION, withQuery, "WITH query name '%s' specified more than once", name);
                 }
 
                 // check if all or none of the columns are explicitly alias
                 if (withQuery.getColumnNames().isPresent()) {
-                    List<String> columnNames = withQuery.getColumnNames().get();
+                    List<Identifier> columnNames = withQuery.getColumnNames().get();
                     RelationType queryDescriptor = analysis.getOutputDescriptor(query);
                     if (columnNames.size() != queryDescriptor.getVisibleFieldCount()) {
                         throw new SemanticException(MISMATCHED_COLUMN_ALIASES, withQuery, "WITH column alias list has %s entries but WITH query(%s) has %s columns", columnNames.size(), name, queryDescriptor.getVisibleFieldCount());
