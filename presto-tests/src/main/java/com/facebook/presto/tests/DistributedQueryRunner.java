@@ -15,7 +15,7 @@ package com.facebook.presto.tests;
 
 import com.facebook.presto.Session;
 import com.facebook.presto.connector.ConnectorId;
-import com.facebook.presto.cost.CostCalculator;
+import com.facebook.presto.cost.StatsCalculator;
 import com.facebook.presto.execution.QueryInfo;
 import com.facebook.presto.execution.QueryManager;
 import com.facebook.presto.metadata.AllNodes;
@@ -28,21 +28,23 @@ import com.facebook.presto.spi.Node;
 import com.facebook.presto.spi.Plugin;
 import com.facebook.presto.spi.QueryId;
 import com.facebook.presto.sql.parser.SqlParserOptions;
+import com.facebook.presto.sql.planner.NodePartitioningManager;
 import com.facebook.presto.sql.planner.Plan;
 import com.facebook.presto.testing.MaterializedResult;
 import com.facebook.presto.testing.QueryRunner;
 import com.facebook.presto.testing.TestingAccessControlManager;
 import com.facebook.presto.transaction.TransactionManager;
-import com.google.common.base.Throwables;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.io.Closer;
+import io.airlift.discovery.server.testing.TestingDiscoveryServer;
 import io.airlift.log.Logger;
 import io.airlift.testing.Assertions;
 import io.airlift.units.Duration;
 import org.intellij.lang.annotations.Language;
 
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.net.URI;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -57,6 +59,7 @@ import static com.facebook.presto.testing.TestingSession.TESTING_CATALOG;
 import static com.facebook.presto.testing.TestingSession.createBogusTestingCatalog;
 import static com.facebook.presto.tests.AbstractTestQueries.TEST_CATALOG_PROPERTIES;
 import static com.facebook.presto.tests.AbstractTestQueries.TEST_SYSTEM_PROPERTIES;
+import static com.google.common.base.Throwables.throwIfUnchecked;
 import static com.google.common.collect.Iterables.getOnlyElement;
 import static io.airlift.units.Duration.nanosSince;
 import static java.util.Objects.requireNonNull;
@@ -96,30 +99,31 @@ public class DistributedQueryRunner
             int workersCount,
             Map<String, String> extraProperties,
             Map<String, String> coordinatorProperties,
-            SqlParserOptions parserOptions)
+            SqlParserOptions parserOptions,
+            String environment)
             throws Exception
     {
         requireNonNull(defaultSession, "defaultSession is null");
 
         try {
             long start = System.nanoTime();
-            discoveryServer = closer.register(new TestingDiscoveryServer(ENVIRONMENT));
+            discoveryServer = new TestingDiscoveryServer(environment);
+            closer.register(() -> closeUnchecked(discoveryServer));
             log.info("Created TestingDiscoveryServer in %s", nanosSince(start).convertToMostSuccinctTimeUnit());
 
             ImmutableList.Builder<TestingPrestoServer> servers = ImmutableList.builder();
 
             for (int i = 1; i < workersCount; i++) {
-                TestingPrestoServer worker = closer.register(createTestingPrestoServer(discoveryServer.getBaseUrl(), false, extraProperties, parserOptions));
+                TestingPrestoServer worker = closer.register(createTestingPrestoServer(discoveryServer.getBaseUrl(), false, extraProperties, parserOptions, environment));
                 servers.add(worker);
             }
 
-            Map<String, String> extraCoordinatorProperties = ImmutableMap.<String, String>builder()
-                    .put("optimizer.optimize-mixed-distinct-aggregations", "true")
-                    .put("experimental.iterative-optimizer-enabled", "true")
-                    .putAll(extraProperties)
-                    .putAll(coordinatorProperties)
-                    .build();
-            coordinator = closer.register(createTestingPrestoServer(discoveryServer.getBaseUrl(), true, extraCoordinatorProperties, parserOptions));
+            Map<String, String> extraCoordinatorProperties = new HashMap<>();
+            extraCoordinatorProperties.put("optimizer.optimize-mixed-distinct-aggregations", "true");
+            extraCoordinatorProperties.put("experimental.iterative-optimizer-enabled", "true");
+            extraCoordinatorProperties.putAll(extraProperties);
+            extraCoordinatorProperties.putAll(coordinatorProperties);
+            coordinator = closer.register(createTestingPrestoServer(discoveryServer.getBaseUrl(), true, extraCoordinatorProperties, parserOptions, environment));
             servers.add(coordinator);
 
             this.servers = servers.build();
@@ -161,14 +165,24 @@ public class DistributedQueryRunner
         }
     }
 
-    private static TestingPrestoServer createTestingPrestoServer(URI discoveryUri, boolean coordinator, Map<String, String> extraProperties, SqlParserOptions parserOptions)
+    public DistributedQueryRunner(
+            Session defaultSession,
+            int workersCount,
+            Map<String, String> extraProperties,
+            Map<String, String> coordinatorProperties,
+            SqlParserOptions parserOptions)
+            throws Exception
+    {
+        this(defaultSession, workersCount, extraProperties, coordinatorProperties, parserOptions, ENVIRONMENT);
+    }
+
+    private static TestingPrestoServer createTestingPrestoServer(URI discoveryUri, boolean coordinator, Map<String, String> extraProperties, SqlParserOptions parserOptions, String environment)
             throws Exception
     {
         long start = System.nanoTime();
         ImmutableMap.Builder<String, String> propertiesBuilder = ImmutableMap.<String, String>builder()
                 .put("query.client.timeout", "10m")
                 .put("exchange.http-client.idle-timeout", "1h")
-                .put("compiler.interpreter-enabled", "false")
                 .put("task.max-index-memory", "16kB") // causes index joins to fault load
                 .put("datasources", "system")
                 .put("distributed-index-joins-enabled", "true")
@@ -180,7 +194,7 @@ public class DistributedQueryRunner
         HashMap<String, String> properties = new HashMap<>(propertiesBuilder.build());
         properties.putAll(extraProperties);
 
-        TestingPrestoServer server = new TestingPrestoServer(coordinator, properties, ENVIRONMENT, discoveryUri, parserOptions, ImmutableList.of());
+        TestingPrestoServer server = new TestingPrestoServer(coordinator, properties, environment, discoveryUri, parserOptions, ImmutableList.of());
 
         log.info("Created TestingPrestoServer in %s", nanosSince(start).convertToMostSuccinctTimeUnit());
 
@@ -229,9 +243,15 @@ public class DistributedQueryRunner
     }
 
     @Override
-    public CostCalculator getCostCalculator()
+    public NodePartitioningManager getNodePartitioningManager()
     {
-        return coordinator.getCostCalculator();
+        return coordinator.getNodePartitioningManager();
+    }
+
+    @Override
+    public StatsCalculator getStatsCalculator()
+    {
+        return coordinator.getStatsCalculator();
     }
 
     @Override
@@ -285,7 +305,7 @@ public class DistributedQueryRunner
             }
             catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
-                throw Throwables.propagate(e);
+                throw new RuntimeException(e);
             }
         }
         log.info("Announced catalog %s (%s) in %s", catalogName, connectorId, nanosSince(start));
@@ -362,6 +382,15 @@ public class DistributedQueryRunner
         }
     }
 
+    @Override
+    public Plan createPlan(Session session, String sql)
+    {
+        QueryId queryId = executeWithQueryId(session, sql).getQueryId();
+        Plan queryPlan = getQueryPlan(queryId);
+        coordinator.getQueryManager().cancelQuery(queryId);
+        return queryPlan;
+    }
+
     public QueryInfo getQueryInfo(QueryId queryId)
     {
         return coordinator.getQueryManager().getQueryInfo(queryId);
@@ -386,7 +415,7 @@ public class DistributedQueryRunner
             closer.close();
         }
         catch (IOException e) {
-            throw Throwables.propagate(e);
+            throw new UncheckedIOException(e);
         }
     }
 
@@ -397,6 +426,17 @@ public class DistributedQueryRunner
             if (!queryInfo.getState().isDone()) {
                 queryManager.cancelQuery(queryInfo.getQueryId());
             }
+        }
+    }
+
+    private static void closeUnchecked(AutoCloseable closeable)
+    {
+        try {
+            closeable.close();
+        }
+        catch (Exception e) {
+            throwIfUnchecked(e);
+            throw new RuntimeException(e);
         }
     }
 }

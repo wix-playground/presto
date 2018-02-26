@@ -14,12 +14,12 @@ Lambda expressions are written with ``->``::
     x -> IF(x > 0, x, -x)
     x -> COALESCE(x, 0)
     x -> CAST(x AS JSON)
+    x -> x + TRY(1 / 0)
 
 Most SQL expressions can be used in a lambda body, with a few exceptions:
 
 * Subqueries are not supported. ``x -> 2 + (SELECT 3)``
 * Aggregations are not supported. ``x -> max(y)``
-* The ``TRY`` function is not supported yet. (:func:`try_cast` is supported.)
 
 Lambda Functions
 ----------------
@@ -100,3 +100,18 @@ Lambda Functions
         SELECT zip_with(ARRAY[1, 3, 5], ARRAY['a', 'b', 'c'], (x, y) -> (y, x)); -- [ROW('a', 1), ROW('b', 3), ROW('c', 5)]
         SELECT zip_with(ARRAY[1, 2], ARRAY[3, 4], (x, y) -> x + y); -- [4, 6]
         SELECT zip_with(ARRAY['a', 'b', 'c'], ARRAY['d', 'e', 'f'], (x, y) -> concat(x, y)); -- ['ad', 'be', 'cf']
+
+.. function:: map_zip_with(map<K, V1>, map<K, V2>, function<K,V1,V2,V3>) -> map<K, V3>
+
+    Merges the two given maps into a single map by applying ``function`` to the pair of values with the same key. For keys only presented in one map
+    NULL will be passed as value for the missing key::
+
+        SELECT map_zip_with(MAP(ARRAY[1, 2, 3], ARRAY['a', 'b', 'c']), -- {1 -> ad, 2 -> be, 3 -> cf}
+         	            MAP(ARRAY[1, 2, 3], ARRAY['d', 'e', 'f']),
+         	            (k, v1, v2) -> concat(v1, v2));
+        SELECT map_zip_with(MAP(ARRAY['k1', 'k2'], ARRAY[1, 2]), -- {k1 -> ROW(1, null), k2 -> ROW(2, 4), k3 -> ROW(null, 9)}
+         	            MAP(ARRAY['k2', 'k3'], ARRAY[4, 9]),
+         	            (k, v1, v2) -> (v1, v2));
+        SELECT map_zip_with(MAP(ARRAY['a', 'b', 'c'], ARRAY[1, 8, 27]), -- {a -> a1, b -> b4, c -> c9}
+         	            MAP(ARRAY['a', 'b', 'c'], ARRAY[1, 2, 3]),
+         	            (k, v1, v2) -> k || CAST(v1/v2 AS VARCHAR));

@@ -15,6 +15,7 @@ package com.facebook.presto.memory;
 
 import com.facebook.presto.Session;
 import com.facebook.presto.execution.buffer.TestingPagesSerdeFactory;
+import com.facebook.presto.memory.context.LocalMemoryContext;
 import com.facebook.presto.operator.Driver;
 import com.facebook.presto.operator.DriverContext;
 import com.facebook.presto.operator.Operator;
@@ -56,6 +57,7 @@ import static io.airlift.units.DataSize.Unit.MEGABYTE;
 import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertFalse;
 import static org.testng.Assert.assertTrue;
+import static org.testng.Assert.fail;
 
 @Test(singleThreaded = true)
 public class TestMemoryPools
@@ -99,8 +101,7 @@ public class TestMemoryPools
     {
         // query will reserve all memory in the user pool and discard the output
         setUp(() -> {
-            OutputFactory outputFactory = new PageConsumerOutputFactory(types -> (page -> {
-            }));
+            OutputFactory outputFactory = new PageConsumerOutputFactory(types -> (page -> {}));
             return localQueryRunner.createDrivers("SELECT COUNT(*) FROM orders JOIN lineitem USING (orderkey)", outputFactory, taskContext);
         });
     }
@@ -115,20 +116,19 @@ public class TestMemoryPools
                     new PlanNodeId("revokable_operator"),
                     TableScanOperator.class.getSimpleName());
 
-            OutputFactory outputFactory = new PageConsumerOutputFactory(types -> (page -> {
-            }));
+            OutputFactory outputFactory = new PageConsumerOutputFactory(types -> (page -> {}));
             Operator outputOperator = outputFactory.createOutputOperator(2, new PlanNodeId("output"), ImmutableList.of(), Function.identity(), new TestingPagesSerdeFactory()).createOperator(driverContext);
             RevocableMemoryOperator revocableMemoryOperator = new RevocableMemoryOperator(revokableOperatorContext, reservedPerPage, numberOfPages);
             createOperator.set(revocableMemoryOperator);
 
-            return ImmutableList.of(new Driver(driverContext, revocableMemoryOperator, outputOperator));
+            Driver driver = Driver.createDriver(driverContext, revocableMemoryOperator, outputOperator);
+            return ImmutableList.of(driver);
         });
         return createOperator.get();
     }
 
     @AfterMethod(alwaysRun = true)
     public void tearDown()
-            throws Exception
     {
         if (localQueryRunner != null) {
             localQueryRunner.close();
@@ -138,7 +138,6 @@ public class TestMemoryPools
 
     @Test
     public void testBlockingOnUserMemory()
-            throws Exception
     {
         setUpCountStarFromOrdersWithJoin();
         assertTrue(userPool.tryReserve(fakeQueryId, TEN_MEGABYTES.toBytes()));
@@ -165,8 +164,24 @@ public class TestMemoryPools
     }
 
     @Test
+    public void testMemoryFutureCancellation()
+    {
+        setUpCountStarFromOrdersWithJoin();
+        ListenableFuture future = userPool.reserve(fakeQueryId, TEN_MEGABYTES.toBytes());
+        assertTrue(!future.isDone());
+        try {
+            future.cancel(true);
+            fail("cancel should fail");
+        }
+        catch (UnsupportedOperationException e) {
+            assertEquals(e.getMessage(), "cancellation is not supported");
+        }
+        userPool.free(fakeQueryId, TEN_MEGABYTES.toBytes());
+        assertTrue(future.isDone());
+    }
+
+    @Test
     public void testBlockingOnRevocableMemoryFreeUser()
-            throws Exception
     {
         setupConsumeRevocableMemory(ONE_BYTE, 10);
         assertTrue(userPool.tryReserve(fakeQueryId, TEN_MEGABYTES_WITHOUT_TWO_BYTES.toBytes()));
@@ -188,7 +203,6 @@ public class TestMemoryPools
 
     @Test
     public void testBlockingOnRevocableMemoryFreeViaRevoke()
-            throws Exception
     {
         RevocableMemoryOperator revocableMemoryOperator = setupConsumeRevocableMemory(ONE_BYTE, 5);
         assertTrue(userPool.tryReserve(fakeQueryId, TEN_MEGABYTES_WITHOUT_TWO_BYTES.toBytes()));
@@ -270,13 +284,15 @@ public class TestMemoryPools
         private final DataSize reservedPerPage;
         private final long numberOfPages;
         private final OperatorContext operatorContext;
-        private long producedPagesCount = 0;
+        private long producedPagesCount;
+        private final LocalMemoryContext revocableMemoryContext;
 
         public RevocableMemoryOperator(OperatorContext operatorContext, DataSize reservedPerPage, long numberOfPages)
         {
             this.operatorContext = operatorContext;
             this.reservedPerPage = reservedPerPage;
             this.numberOfPages = numberOfPages;
+            this.revocableMemoryContext = operatorContext.localRevocableMemoryContext();
         }
 
         @Override
@@ -288,7 +304,7 @@ public class TestMemoryPools
         @Override
         public void finishMemoryRevoke()
         {
-            operatorContext.setRevocableMemoryReservation(0);
+            revocableMemoryContext.setBytes(0);
         }
 
         @Override
@@ -306,7 +322,7 @@ public class TestMemoryPools
         @Override
         public void finish()
         {
-            operatorContext.setRevocableMemoryReservation(0);
+            revocableMemoryContext.setBytes(0);
         }
 
         @Override
@@ -330,7 +346,7 @@ public class TestMemoryPools
         @Override
         public Page getOutput()
         {
-            operatorContext.reserveRevocableMemory(reservedPerPage.toBytes());
+            revocableMemoryContext.setBytes(revocableMemoryContext.getBytes() + reservedPerPage.toBytes());
             producedPagesCount++;
             if (producedPagesCount == numberOfPages) {
                 finish();

@@ -59,6 +59,7 @@ import static com.google.common.io.MoreFiles.deleteRecursively;
 import static com.google.common.io.RecursiveDeleteOption.ALLOW_INSECURE;
 import static org.testng.Assert.assertEquals;
 
+@Test(singleThreaded = true)
 public class TestShardOrganizerUtil
 {
     private static final List<ColumnInfo> COLUMNS = ImmutableList.of(
@@ -98,7 +99,6 @@ public class TestShardOrganizerUtil
 
     @Test
     public void testGetOrganizationEligibleShards()
-            throws Exception
     {
         int day1 = 1111;
         int day2 = 2222;
@@ -110,7 +110,8 @@ public class TestShardOrganizerUtil
                 .column("orderstatus", createVarcharType(3))
                 .property("ordering", ImmutableList.of("orderstatus", "orderkey"))
                 .property("temporal_column", "orderdate")
-                .build());
+                .build(),
+                false);
         Table tableInfo = metadataDao.getTableInformation(tableName.getSchemaName(), tableName.getTableName());
         List<TableColumn> tableColumns = metadataDao.listTableColumns(tableInfo.getTableId());
         Map<String, TableColumn> tableColumnMap = Maps.uniqueIndex(tableColumns, TableColumn::getColumnName);

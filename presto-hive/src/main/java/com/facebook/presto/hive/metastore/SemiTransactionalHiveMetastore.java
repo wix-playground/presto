@@ -58,6 +58,7 @@ import java.util.stream.Collectors;
 import static com.facebook.presto.hive.HiveErrorCode.HIVE_FILESYSTEM_ERROR;
 import static com.facebook.presto.hive.HiveErrorCode.HIVE_METASTORE_ERROR;
 import static com.facebook.presto.hive.HiveErrorCode.HIVE_PATH_ALREADY_EXISTS;
+import static com.facebook.presto.hive.HiveErrorCode.HIVE_TABLE_DROPPED_DURING_QUERY;
 import static com.facebook.presto.hive.HiveMetadata.PRESTO_QUERY_ID_NAME;
 import static com.facebook.presto.hive.HiveUtil.toPartitionValues;
 import static com.facebook.presto.hive.HiveWriteUtils.createDirectory;
@@ -95,7 +96,7 @@ public class SemiTransactionalHiveMetastore
     private ExclusiveOperation bufferedExclusiveOperation;
     @GuardedBy("this")
     private State state = State.EMPTY;
-    private boolean throwOnCleanupFailure = false;
+    private boolean throwOnCleanupFailure;
 
     public SemiTransactionalHiveMetastore(HdfsEnvironment hdfsEnvironment, ExtendedHiveMetastore delegate, Executor renameExecutor, boolean skipDeletionForAlter)
     {
@@ -283,14 +284,14 @@ public class SemiTransactionalHiveMetastore
     /**
      * {@code currentLocation} needs to be supplied if a writePath exists for the table.
      */
-    public synchronized void createTable(ConnectorSession session, Table table, PrincipalPrivileges principalPrivileges, Optional<Path> currentPath)
+    public synchronized void createTable(ConnectorSession session, Table table, PrincipalPrivileges principalPrivileges, Optional<Path> currentPath, boolean ignoreExisting)
     {
         setShared();
         // When creating a table, it should never have partition actions. This is just a sanity check.
         checkNoPartitionAction(table.getDatabaseName(), table.getTableName());
         SchemaTableName schemaTableName = new SchemaTableName(table.getDatabaseName(), table.getTableName());
         Action<TableAndMore> oldTableAction = tableActions.get(schemaTableName);
-        TableAndMore tableAndMore = new TableAndMore(table, Optional.of(principalPrivileges), currentPath, Optional.empty());
+        TableAndMore tableAndMore = new TableAndMore(table, Optional.of(principalPrivileges), currentPath, Optional.empty(), ignoreExisting);
         if (oldTableAction == null) {
             HdfsContext context = new HdfsContext(session, table.getDatabaseName(), table.getTableName());
             tableActions.put(schemaTableName, new Action<>(ActionType.ADD, tableAndMore, context));
@@ -374,7 +375,7 @@ public class SemiTransactionalHiveMetastore
                     schemaTableName,
                     new Action<>(
                             ActionType.INSERT_EXISTING,
-                            new TableAndMore(table.get(), Optional.empty(), Optional.of(currentLocation), Optional.of(fileNames)), context));
+                            new TableAndMore(table.get(), Optional.empty(), Optional.of(currentLocation), Optional.of(fileNames), false), context));
             return;
         }
 
@@ -961,8 +962,7 @@ public class SemiTransactionalHiveMetastore
                     }
                 }
             }
-
-            addTableOperations.add(new CreateTableOperation(table, tableAndMore.getPrincipalPrivileges()));
+            addTableOperations.add(new CreateTableOperation(table, tableAndMore.getPrincipalPrivileges(), tableAndMore.isIgnoreExisting()));
         }
 
         private void prepareInsertExistingTable(HdfsContext context, TableAndMore tableAndMore)
@@ -1093,7 +1093,7 @@ public class SemiTransactionalHiveMetastore
                     // Ignore the task if the source directory doesn't exist.
                     // This is probably because the original rename that we are trying to undo here never succeeded.
                     if (pathExists(directoryRenameTask.getContext(), hdfsEnvironment, directoryRenameTask.getRenameFrom())) {
-                        renameDirectory(directoryRenameTask.getContext(), hdfsEnvironment, directoryRenameTask.getRenameFrom(), directoryRenameTask.getRenameTo(), () -> { });
+                        renameDirectory(directoryRenameTask.getContext(), hdfsEnvironment, directoryRenameTask.getRenameFrom(), directoryRenameTask.getRenameTo(), () -> {});
                     }
                 }
                 catch (Throwable throwable) {
@@ -1746,16 +1746,28 @@ public class SemiTransactionalHiveMetastore
         private final Optional<PrincipalPrivileges> principalPrivileges;
         private final Optional<Path> currentLocation; // unpartitioned table only
         private final Optional<List<String>> fileNames;
+        private final boolean ignoreExisting;
 
-        public TableAndMore(Table table, Optional<PrincipalPrivileges> principalPrivileges, Optional<Path> currentLocation, Optional<List<String>> fileNames)
+        public TableAndMore(
+                Table table,
+                Optional<PrincipalPrivileges> principalPrivileges,
+                Optional<Path> currentLocation,
+                Optional<List<String>> fileNames,
+                boolean ignoreExisting)
         {
             this.table = requireNonNull(table, "table is null");
             this.principalPrivileges = requireNonNull(principalPrivileges, "principalPrivileges is null");
             this.currentLocation = requireNonNull(currentLocation, "currentLocation is null");
             this.fileNames = requireNonNull(fileNames, "fileNames is null");
+            this.ignoreExisting = ignoreExisting;
 
             checkArgument(!table.getStorage().getLocation().isEmpty() || !currentLocation.isPresent(), "currentLocation can not be supplied for table without location");
             checkArgument(!fileNames.isPresent() || currentLocation.isPresent(), "fileNames can be supplied only when currentLocation is supplied");
+        }
+
+        public boolean isIgnoreExisting()
+        {
+            return ignoreExisting;
         }
 
         public Table getTable()
@@ -2031,35 +2043,55 @@ public class SemiTransactionalHiveMetastore
 
     private static class CreateTableOperation
     {
-        private final Table table;
+        private final Table newTable;
         private final PrincipalPrivileges privileges;
-        private boolean done;
+        private boolean tableCreated;
+        private final boolean ignoreExisting;
+        private final String queryId;
 
-        public CreateTableOperation(Table table, PrincipalPrivileges privileges)
+        public CreateTableOperation(Table newTable, PrincipalPrivileges privileges, boolean ignoreExisting)
         {
-            requireNonNull(table, "table is null");
-            checkArgument(getPrestoQueryId(table).isPresent());
-            this.table = table;
+            requireNonNull(newTable, "newTable is null");
+            this.newTable = newTable;
             this.privileges = requireNonNull(privileges, "privileges is null");
+            this.ignoreExisting = ignoreExisting;
+            this.queryId = getPrestoQueryId(newTable).orElseThrow(() -> new IllegalArgumentException("Query id is not present"));
         }
 
         public String getDescription()
         {
-            return format("add table %s.%s", table.getDatabaseName(), table.getTableName());
+            return format("add table %s.%s", newTable.getDatabaseName(), newTable.getTableName());
         }
 
         public void run(ExtendedHiveMetastore metastore)
         {
+            boolean done = false;
             try {
-                metastore.createTable(table, privileges);
+                metastore.createTable(newTable, privileges);
                 done = true;
             }
             catch (RuntimeException e) {
                 try {
-                    Optional<Table> remoteTable = metastore.getTable(table.getDatabaseName(), table.getTableName());
-                    // getPrestoQueryId(partition) is guaranteed to be non-empty. It is asserted in the constructor.
-                    if (remoteTable.isPresent() && getPrestoQueryId(remoteTable.get()).equals(getPrestoQueryId(table))) {
-                        done = true;
+                    Optional<Table> existingTable = metastore.getTable(newTable.getDatabaseName(), newTable.getTableName());
+                    if (existingTable.isPresent()) {
+                        Table table = existingTable.get();
+                        Optional<String> existingTableQueryId = getPrestoQueryId(table);
+                        if (existingTableQueryId.isPresent() && existingTableQueryId.get().equals(queryId)) {
+                            // ignore table if it was already created by the same query during retries
+                            done = true;
+                        }
+                        else {
+                            // If the table definition in the metastore is different than what this tx wants to create
+                            // then there is a conflict (e.g., current tx wants to create T(a: bigint),
+                            // but another tx already created T(a: varchar)).
+                            // This may be a problem if there is an insert after this step.
+                            if (!hasTheSameSchema(newTable, table)) {
+                                e = new PrestoException(TRANSACTION_CONFLICT, format("Table already exists with a different schema: '%s'", newTable.getTableName()));
+                            }
+                            else {
+                                done = ignoreExisting;
+                            }
+                        }
                     }
                 }
                 catch (RuntimeException ignored) {
@@ -2068,18 +2100,39 @@ public class SemiTransactionalHiveMetastore
                     // Not deleting the table may leave garbage behind. The former is much more dangerous than the latter.
                     // Therefore, the table is not considered added.
                 }
+
                 if (!done) {
                     throw e;
                 }
             }
+            tableCreated = true;
+        }
+
+        private boolean hasTheSameSchema(Table newTable, Table existingTable)
+        {
+            List<Column> newTableColumns = newTable.getDataColumns();
+            List<Column> existingTableColumns = existingTable.getDataColumns();
+
+            if (newTableColumns.size() != existingTableColumns.size()) {
+                return false;
+            }
+
+            for (Column existingColumn : existingTableColumns) {
+                if (newTableColumns.stream()
+                        .noneMatch(newColumn -> newColumn.getName().equals(existingColumn.getName())
+                                && newColumn.getType().equals(existingColumn.getType()))) {
+                    return false;
+                }
+            }
+            return true;
         }
 
         public void undo(ExtendedHiveMetastore metastore)
         {
-            if (!done) {
+            if (!tableCreated) {
                 return;
             }
-            metastore.dropTable(table.getDatabaseName(), table.getTableName(), false);
+            metastore.dropTable(newTable.getDatabaseName(), newTable.getTableName(), false);
         }
     }
 
@@ -2189,6 +2242,9 @@ public class SemiTransactionalHiveMetastore
                     // For some reason, it threw an exception (communication failure, retry failure after communication failure, etc).
                     // But we would consider it successful anyways.
                     if (!batchCompletelyAdded) {
+                        if (t instanceof TableNotFoundException) {
+                            throw new PrestoException(HIVE_TABLE_DROPPED_DURING_QUERY, t);
+                        }
                         throw t;
                     }
                 }

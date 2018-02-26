@@ -30,6 +30,7 @@ import com.facebook.presto.type.Constraint;
 import com.facebook.presto.type.LiteralParameter;
 import com.google.common.primitives.Doubles;
 import io.airlift.slice.Slice;
+import org.apache.commons.math3.special.Erf;
 
 import java.math.BigInteger;
 import java.util.concurrent.ThreadLocalRandom;
@@ -600,6 +601,29 @@ public final class MathFunctions
         return ThreadLocalRandom.current().nextLong(value);
     }
 
+    @Description("inverse of normal cdf given a mean, std, and probability")
+    @ScalarFunction
+    @SqlType(StandardTypes.DOUBLE)
+    public static double inverseNormalCdf(@SqlType(StandardTypes.DOUBLE) double mean, @SqlType(StandardTypes.DOUBLE) double sd, @SqlType(StandardTypes.DOUBLE) double p)
+    {
+        checkCondition(p > 0 && p < 1, INVALID_FUNCTION_ARGUMENT, "p must be 0 > p > 1");
+        checkCondition(sd > 0, INVALID_FUNCTION_ARGUMENT, "sd must > 0");
+
+        return mean + sd * 1.4142135623730951 * Erf.erfInv(2 * p - 1);
+    }
+
+    @Description("normal cdf given a mean, standard deviation, and value")
+    @ScalarFunction
+    @SqlType(StandardTypes.DOUBLE)
+    public static double normalCdf(
+            @SqlType(StandardTypes.DOUBLE) double mean,
+            @SqlType(StandardTypes.DOUBLE) double standardDeviation,
+            @SqlType(StandardTypes.DOUBLE) double value)
+    {
+        checkCondition(standardDeviation > 0, INVALID_FUNCTION_ARGUMENT, "standardDeviation must > 0");
+        return 0.5 * (1 + Erf.erf((value - mean) / (standardDeviation * Math.sqrt(2))));
+    }
+
     @Description("round to nearest integer")
     @ScalarFunction("round")
     @SqlType(StandardTypes.TINYINT)
@@ -785,7 +809,6 @@ public final class MathFunctions
                 @LiteralParameter("rp") Long resultPrecision,
                 @SqlType("decimal(p, s)") Slice num,
                 @SqlType(StandardTypes.BIGINT) long decimals)
-
         {
             if (numScale == 0) {
                 return num;
@@ -812,7 +835,6 @@ public final class MathFunctions
                 @LiteralParameter("rp") Long resultPrecision,
                 @SqlType("decimal(p, s)") long num,
                 @SqlType(StandardTypes.BIGINT) long decimals)
-
         {
             return roundNLong(numScale, resultPrecision, unscaledDecimal(num), decimals);
         }

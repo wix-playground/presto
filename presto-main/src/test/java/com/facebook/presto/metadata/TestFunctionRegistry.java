@@ -32,7 +32,6 @@ import com.google.common.collect.ImmutableSet;
 import org.testng.annotations.Test;
 
 import java.lang.invoke.MethodHandles;
-import java.util.Collections;
 import java.util.List;
 
 import static com.facebook.presto.metadata.FunctionKind.SCALAR;
@@ -40,6 +39,8 @@ import static com.facebook.presto.metadata.FunctionRegistry.getMagicLiteralFunct
 import static com.facebook.presto.metadata.FunctionRegistry.mangleOperatorName;
 import static com.facebook.presto.metadata.FunctionRegistry.unmangleOperator;
 import static com.facebook.presto.metadata.Signature.typeVariable;
+import static com.facebook.presto.operator.scalar.ScalarFunctionImplementation.ArgumentProperty.valueTypeArgumentProperty;
+import static com.facebook.presto.operator.scalar.ScalarFunctionImplementation.NullConvention.RETURN_NULL_ON_NULL;
 import static com.facebook.presto.spi.type.HyperLogLogType.HYPER_LOG_LOG;
 import static com.facebook.presto.spi.type.TimestampWithTimeZoneType.TIMESTAMP_WITH_TIME_ZONE;
 import static com.facebook.presto.spi.type.TypeSignature.parseTypeSignature;
@@ -48,6 +49,7 @@ import static com.facebook.presto.type.TypeUtils.resolveTypes;
 import static com.google.common.collect.ImmutableList.toImmutableList;
 import static com.google.common.collect.Lists.transform;
 import static java.lang.String.format;
+import static java.util.Collections.nCopies;
 import static java.util.stream.Collectors.toList;
 import static org.testng.Assert.assertEquals;
 import static org.testng.Assert.assertFalse;
@@ -124,7 +126,6 @@ public class TestFunctionRegistry
 
     @Test(expectedExceptions = IllegalStateException.class, expectedExceptionsMessageRegExp = "'sum' is both an aggregation and a scalar function")
     public void testConflictingScalarAggregation()
-            throws Exception
     {
         List<SqlFunction> functions = new FunctionListBuilder()
                 .scalars(ScalarSum.class)
@@ -137,7 +138,6 @@ public class TestFunctionRegistry
 
     @Test
     public void testListingHiddenFunctions()
-            throws Exception
     {
         TypeRegistry typeManager = new TypeRegistry();
         FunctionRegistry registry = new FunctionRegistry(typeManager, new BlockEncodingManager(typeManager), new FeaturesConfig());
@@ -152,7 +152,6 @@ public class TestFunctionRegistry
 
     @Test
     public void testResolveFunctionByExactMatch()
-            throws Exception
     {
         assertThatResolveFunction()
                 .among(functionSignature("bigint", "bigint"))
@@ -162,7 +161,6 @@ public class TestFunctionRegistry
 
     @Test
     public void testResolveTypeParametrizedFunction()
-            throws Exception
     {
         assertThatResolveFunction()
                 .among(functionSignature(ImmutableList.of("T", "T"), "boolean", ImmutableList.of(typeVariable("T"))))
@@ -172,7 +170,6 @@ public class TestFunctionRegistry
 
     @Test
     public void testResolveFunctionWithCoercion()
-            throws Exception
     {
         assertThatResolveFunction()
                 .among(
@@ -185,7 +182,6 @@ public class TestFunctionRegistry
 
     @Test
     public void testAmbiguousCallWithNoCoercion()
-            throws Exception
     {
         assertThatResolveFunction()
                 .among(
@@ -197,7 +193,6 @@ public class TestFunctionRegistry
 
     @Test
     public void testAmbiguousCallWithCoercion()
-            throws Exception
     {
         assertThatResolveFunction()
                 .among(
@@ -209,7 +204,6 @@ public class TestFunctionRegistry
 
     @Test
     public void testResolveFunctionWithCoercionInTypes()
-            throws Exception
     {
         assertThatResolveFunction()
                 .among(
@@ -222,7 +216,6 @@ public class TestFunctionRegistry
 
     @Test
     public void testResolveFunctionWithVariableArity()
-            throws Exception
     {
         assertThatResolveFunction()
                 .among(
@@ -241,7 +234,6 @@ public class TestFunctionRegistry
 
     @Test
     public void testResolveFunctionWithVariadicBound()
-            throws Exception
     {
         assertThatResolveFunction()
                 .among(
@@ -258,7 +250,6 @@ public class TestFunctionRegistry
 
     @Test
     public void testResolveFunctionForUnknown()
-            throws Exception
     {
         assertThatResolveFunction()
                 .among(
@@ -396,7 +387,11 @@ public class TestFunctionRegistry
                             TypeManager typeManager,
                             FunctionRegistry functionRegistry)
                     {
-                        return new ScalarFunctionImplementation(false, Collections.nCopies(arity, Boolean.FALSE), MethodHandles.identity(Void.class), true);
+                        return new ScalarFunctionImplementation(
+                                false,
+                                nCopies(arity, valueTypeArgumentProperty(RETURN_NULL_ON_NULL)),
+                                MethodHandles.identity(Void.class),
+                                true);
                     }
 
                     @Override

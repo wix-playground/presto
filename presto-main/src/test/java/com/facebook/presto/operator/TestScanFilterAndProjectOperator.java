@@ -41,6 +41,7 @@ import com.facebook.presto.testing.MaterializedResult;
 import com.facebook.presto.testing.TestingSplit;
 import com.facebook.presto.testing.TestingTransactionHandle;
 import com.google.common.collect.ImmutableList;
+import io.airlift.units.DataSize;
 import org.testng.annotations.Test;
 
 import java.util.List;
@@ -49,18 +50,25 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.function.Supplier;
 
+import static com.facebook.presto.RowPagesBuilder.rowPagesBuilder;
 import static com.facebook.presto.SessionTestUtils.TEST_SESSION;
 import static com.facebook.presto.block.BlockAssertions.toValues;
 import static com.facebook.presto.metadata.MetadataManager.createTestMetadataManager;
 import static com.facebook.presto.metadata.Signature.internalScalarFunction;
 import static com.facebook.presto.operator.OperatorAssertion.toMaterializedResult;
+import static com.facebook.presto.operator.PageAssertions.assertPageEquals;
+import static com.facebook.presto.spi.function.OperatorType.EQUAL;
 import static com.facebook.presto.spi.type.BigintType.BIGINT;
+import static com.facebook.presto.spi.type.BooleanType.BOOLEAN;
 import static com.facebook.presto.spi.type.VarcharType.VARCHAR;
 import static com.facebook.presto.sql.relational.Expressions.call;
+import static com.facebook.presto.sql.relational.Expressions.constant;
 import static com.facebook.presto.sql.relational.Expressions.field;
 import static com.facebook.presto.testing.TestingTaskContext.createTaskContext;
 import static com.facebook.presto.testing.assertions.Assert.assertEquals;
 import static io.airlift.concurrent.Threads.daemonThreadsNamed;
+import static io.airlift.units.DataSize.Unit.BYTE;
+import static io.airlift.units.DataSize.Unit.KILOBYTE;
 import static java.util.concurrent.Executors.newCachedThreadPool;
 import static java.util.concurrent.Executors.newScheduledThreadPool;
 import static java.util.concurrent.TimeUnit.SECONDS;
@@ -84,7 +92,6 @@ public class TestScanFilterAndProjectOperator
 
     @Test
     public void testPageSource()
-            throws Exception
     {
         final Page input = SequencePageBuilder.createSequencePage(ImmutableList.of(VARCHAR), 10_000, 0);
         DriverContext driverContext = newDriverContext();
@@ -101,7 +108,9 @@ public class TestScanFilterAndProjectOperator
                 cursorProcessor,
                 pageProcessor,
                 ImmutableList.of(),
-                ImmutableList.of(VARCHAR));
+                ImmutableList.of(VARCHAR),
+                new DataSize(0, BYTE),
+                0);
 
         SourceOperator operator = factory.createOperator(driverContext);
         operator.addSplit(new Split(new ConnectorId("test"), TestingTransactionHandle.create(), TestingSplit.createLocalSplit()));
@@ -115,8 +124,55 @@ public class TestScanFilterAndProjectOperator
     }
 
     @Test
+    public void testPageSourceMergeOutput()
+    {
+        List<Page> input = rowPagesBuilder(BIGINT)
+                .addSequencePage(100, 0)
+                .addSequencePage(100, 0)
+                .addSequencePage(100, 0)
+                .addSequencePage(100, 0)
+                .build();
+
+        RowExpression filter = call(
+                Signature.internalOperator(EQUAL, BOOLEAN.getTypeSignature(), ImmutableList.of(BIGINT.getTypeSignature(), BIGINT.getTypeSignature())),
+                BOOLEAN,
+                field(0, BIGINT),
+                constant(10L, BIGINT));
+        List<RowExpression> projections = ImmutableList.of(field(0, BIGINT));
+        Supplier<CursorProcessor> cursorProcessor = expressionCompiler.compileCursorProcessor(Optional.of(filter), projections, "key");
+        Supplier<PageProcessor> pageProcessor = expressionCompiler.compilePageProcessor(Optional.of(filter), projections);
+
+        ScanFilterAndProjectOperator.ScanFilterAndProjectOperatorFactory factory = new ScanFilterAndProjectOperator.ScanFilterAndProjectOperatorFactory(
+                0,
+                new PlanNodeId("test"),
+                new PlanNodeId("0"),
+                (session, split, columns) -> new FixedPageSource(input),
+                cursorProcessor,
+                pageProcessor,
+                ImmutableList.of(),
+                ImmutableList.of(BIGINT),
+                new DataSize(64, KILOBYTE),
+                2);
+
+        SourceOperator operator = factory.createOperator(newDriverContext());
+        operator.addSplit(new Split(new ConnectorId("test"), TestingTransactionHandle.create(), TestingSplit.createLocalSplit()));
+        operator.noMoreSplits();
+
+        List<Page> actual = toPages(operator);
+        assertEquals(actual.size(), 1);
+
+        List<Page> expected = rowPagesBuilder(BIGINT)
+                .row(10L)
+                .row(10L)
+                .row(10L)
+                .row(10L)
+                .build();
+
+        assertPageEquals(ImmutableList.of(BIGINT), actual.get(0), expected.get(0));
+    }
+
+    @Test
     public void testPageSourceLazyLoad()
-            throws Exception
     {
         Block inputBlock = BlockAssertions.createLongSequenceBlock(0, 100);
         // If column 1 is loaded, test will fail
@@ -137,7 +193,9 @@ public class TestScanFilterAndProjectOperator
                 cursorProcessor,
                 () -> pageProcessor,
                 ImmutableList.of(),
-                ImmutableList.of(BIGINT));
+                ImmutableList.of(BIGINT),
+                new DataSize(0, BYTE),
+                0);
 
         SourceOperator operator = factory.createOperator(driverContext);
         operator.addSplit(new Split(new ConnectorId("test"), TestingTransactionHandle.create(), TestingSplit.createLocalSplit()));
@@ -152,7 +210,6 @@ public class TestScanFilterAndProjectOperator
 
     @Test
     public void testRecordCursorSource()
-            throws Exception
     {
         final Page input = SequencePageBuilder.createSequencePage(ImmutableList.of(VARCHAR), 10_000, 0);
         DriverContext driverContext = newDriverContext();
@@ -169,7 +226,9 @@ public class TestScanFilterAndProjectOperator
                 cursorProcessor,
                 pageProcessor,
                 ImmutableList.of(),
-                ImmutableList.of(VARCHAR));
+                ImmutableList.of(VARCHAR),
+                new DataSize(0, BYTE),
+                0);
 
         SourceOperator operator = factory.createOperator(driverContext);
         operator.addSplit(new Split(new ConnectorId("test"), TestingTransactionHandle.create(), TestingSplit.createLocalSplit()));
@@ -184,7 +243,6 @@ public class TestScanFilterAndProjectOperator
 
     @Test
     public void testPageYield()
-            throws Exception
     {
         int totalRows = 1000;
         Page input = SequencePageBuilder.createSequencePage(ImmutableList.of(BIGINT), totalRows, 1);
@@ -219,14 +277,17 @@ public class TestScanFilterAndProjectOperator
                 cursorProcessor,
                 pageProcessor,
                 ImmutableList.of(),
-                ImmutableList.of(BIGINT));
+                ImmutableList.of(BIGINT),
+                new DataSize(0, BYTE),
+                0);
 
         SourceOperator operator = factory.createOperator(driverContext);
         operator.addSplit(new Split(new ConnectorId("test"), TestingTransactionHandle.create(), TestingSplit.createLocalSplit()));
         operator.noMoreSplits();
 
-        // we only check yield signal once a column has been completely processed; thus the first 19 outputs will get nothing
-        for (int i = 0; i < totalColumns - 1; i++) {
+        // yield for every cell: 20 X 1000 times
+        // currently we enforce a yield check for every position; free feel to adjust the number if the behavior changes
+        for (int i = 0; i < totalRows * totalColumns; i++) {
             driverContext.getYieldSignal().setWithDelay(SECONDS.toNanos(1000), driverContext.getYieldExecutor());
             assertNull(operator.getOutput());
             driverContext.getYieldSignal().reset();
@@ -243,7 +304,6 @@ public class TestScanFilterAndProjectOperator
 
     @Test
     public void testRecordCursorYield()
-            throws Exception
     {
         // create a generic long function that yields for projection on every row
         // verify we will yield #row times totally
@@ -276,7 +336,9 @@ public class TestScanFilterAndProjectOperator
                 cursorProcessor,
                 pageProcessor,
                 ImmutableList.of(),
-                ImmutableList.of(BIGINT));
+                ImmutableList.of(BIGINT),
+                new DataSize(0, BYTE),
+                0);
 
         SourceOperator operator = factory.createOperator(driverContext);
         operator.addSplit(new Split(new ConnectorId("test"), TestingTransactionHandle.create(), TestingSplit.createLocalSplit()));
@@ -340,12 +402,6 @@ public class TestScanFilterAndProjectOperator
         public void close()
         {
             page = null;
-        }
-
-        @Override
-        public long getTotalBytes()
-        {
-            return 0;
         }
 
         @Override

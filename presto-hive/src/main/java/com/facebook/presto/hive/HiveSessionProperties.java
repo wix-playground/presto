@@ -23,7 +23,9 @@ import javax.inject.Inject;
 import java.util.List;
 
 import static com.facebook.presto.spi.session.PropertyMetadata.booleanSessionProperty;
+import static com.facebook.presto.spi.session.PropertyMetadata.stringSessionProperty;
 import static com.facebook.presto.spi.type.VarcharType.createUnboundedVarcharType;
+import static java.util.Locale.ENGLISH;
 
 public final class HiveSessionProperties
 {
@@ -34,8 +36,11 @@ public final class HiveSessionProperties
     private static final String ORC_MAX_BUFFER_SIZE = "orc_max_buffer_size";
     private static final String ORC_STREAM_BUFFER_SIZE = "orc_stream_buffer_size";
     private static final String ORC_MAX_READ_BLOCK_SIZE = "orc_max_read_block_size";
+    private static final String ORC_LAZY_READ_SMALL_RANGES = "orc_lazy_read_small_ranges";
     private static final String ORC_OPTIMIZED_WRITER_ENABLED = "orc_optimized_writer_enabled";
     private static final String ORC_OPTIMIZED_WRITER_VALIDATE = "orc_optimized_writer_validate";
+    private static final String HIVE_STORAGE_FORMAT = "hive_storage_format";
+    private static final String RESPECT_TABLE_FORMAT = "respect_table_format";
     private static final String PARQUET_PREDICATE_PUSHDOWN_ENABLED = "parquet_predicate_pushdown_enabled";
     private static final String PARQUET_OPTIMIZED_READER_ENABLED = "parquet_optimized_reader_enabled";
     private static final String MAX_SPLIT_SIZE = "max_split_size";
@@ -86,6 +91,11 @@ public final class HiveSessionProperties
                         config.getOrcMaxReadBlockSize(),
                         false),
                 booleanSessionProperty(
+                        ORC_LAZY_READ_SMALL_RANGES,
+                        "Experimental: ORC: Read small file segments lazily",
+                        config.isOrcLazyReadSmallRanges(),
+                        false),
+                booleanSessionProperty(
                         ORC_OPTIMIZED_WRITER_ENABLED,
                         "Experimental: ORC: Enable optimized writer",
                         config.isOrcOptimizedWriterEnabled(),
@@ -93,7 +103,17 @@ public final class HiveSessionProperties
                 booleanSessionProperty(
                         ORC_OPTIMIZED_WRITER_VALIDATE,
                         "Experimental: ORC: Validate writer files",
-                        true,
+                        config.isOrcWriterValidate(),
+                        false),
+                stringSessionProperty(
+                        HIVE_STORAGE_FORMAT,
+                        "Default storage format for new tables or partitions",
+                        config.getHiveStorageFormat().toString(),
+                        false),
+                booleanSessionProperty(
+                        RESPECT_TABLE_FORMAT,
+                        "Write new partitions using table format rather than default storage format",
+                        config.isRespectTableFormat(),
                         false),
                 booleanSessionProperty(
                         PARQUET_OPTIMIZED_READER_ENABLED,
@@ -177,6 +197,11 @@ public final class HiveSessionProperties
         return session.getProperty(ORC_MAX_READ_BLOCK_SIZE, DataSize.class);
     }
 
+    public static boolean getOrcLazyReadSmallRanges(ConnectorSession session)
+    {
+        return session.getProperty(ORC_LAZY_READ_SMALL_RANGES, Boolean.class);
+    }
+
     public static boolean isOrcOptimizedWriterEnabled(ConnectorSession session)
     {
         return session.getProperty(ORC_OPTIMIZED_WRITER_ENABLED, Boolean.class);
@@ -185,6 +210,16 @@ public final class HiveSessionProperties
     public static boolean isOrcOptimizedWriterValidate(ConnectorSession session)
     {
         return session.getProperty(ORC_OPTIMIZED_WRITER_VALIDATE, Boolean.class);
+    }
+
+    public static HiveStorageFormat getHiveStorageFormat(ConnectorSession session)
+    {
+        return HiveStorageFormat.valueOf(session.getProperty(HIVE_STORAGE_FORMAT, String.class).toUpperCase(ENGLISH));
+    }
+
+    public static boolean isRespectTableFormat(ConnectorSession session)
+    {
+        return session.getProperty(RESPECT_TABLE_FORMAT, Boolean.class);
     }
 
     public static boolean isParquetPredicatePushdownEnabled(ConnectorSession session)

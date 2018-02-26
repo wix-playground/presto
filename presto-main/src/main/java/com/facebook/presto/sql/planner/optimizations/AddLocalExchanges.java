@@ -64,6 +64,7 @@ import java.util.Set;
 
 import static com.facebook.presto.SystemSessionProperties.getTaskConcurrency;
 import static com.facebook.presto.SystemSessionProperties.getTaskWriterCount;
+import static com.facebook.presto.SystemSessionProperties.isSpillEnabled;
 import static com.facebook.presto.sql.planner.SystemPartitioningHandle.FIXED_ARBITRARY_DISTRIBUTION;
 import static com.facebook.presto.sql.planner.SystemPartitioningHandle.FIXED_HASH_DISTRIBUTION;
 import static com.facebook.presto.sql.planner.SystemPartitioningHandle.SINGLE_DISTRIBUTION;
@@ -285,9 +286,10 @@ public class AddLocalExchanges
             if (!node.getPartitionBy().isEmpty()) {
                 desiredProperties.add(new GroupingProperty<>(node.getPartitionBy()));
             }
-            for (Symbol symbol : node.getOrderBy()) {
-                desiredProperties.add(new SortingProperty<>(symbol, node.getOrderings().get(symbol)));
-            }
+            node.getOrderingScheme().ifPresent(orderingScheme ->
+                    orderingScheme.getOrderBy().stream()
+                            .map(symbol -> new SortingProperty<>(symbol, orderingScheme.getOrdering(symbol)))
+                            .forEach(desiredProperties::add));
             Iterator<Optional<LocalProperty<Symbol>>> matchIterator = LocalProperties.match(child.getProperties().getLocalProperties(), desiredProperties).iterator();
 
             Set<Symbol> prePartitionedInputs = ImmutableSet.of();
@@ -446,10 +448,19 @@ public class AddLocalExchanges
         @Override
         public PlanWithProperties visitJoin(JoinNode node, StreamPreferredProperties parentPreferences)
         {
-            PlanWithProperties probe = planAndEnforce(
-                    node.getLeft(),
-                    defaultParallelism(session),
-                    parentPreferences.constrainTo(node.getLeft().getOutputSymbols()).withDefaultParallelism(session));
+            PlanWithProperties probe;
+            if (isSpillEnabled(session)) {
+                probe = planAndEnforce(
+                        node.getLeft(),
+                        fixedParallelism(),
+                        parentPreferences.constrainTo(node.getLeft().getOutputSymbols()).withFixedParallelism());
+            }
+            else {
+                probe = planAndEnforce(
+                        node.getLeft(),
+                        defaultParallelism(session),
+                        parentPreferences.constrainTo(node.getLeft().getOutputSymbols()).withDefaultParallelism(session));
+            }
 
             // this build consumes the input completely, so we do not pass through parent preferences
             List<Symbol> buildHashSymbols = Lists.transform(node.getCriteria(), JoinNode.EquiJoinClause::getRight);
@@ -526,6 +537,7 @@ public class AddLocalExchanges
             // enforce the required properties
             result = enforce(result, requiredProperties);
 
+            checkState(requiredProperties.isSatisfiedBy(result.getProperties()), "required properties not enforced");
             return result;
         }
 

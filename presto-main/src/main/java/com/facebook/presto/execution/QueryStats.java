@@ -63,7 +63,8 @@ public class QueryStats
 
     private final double cumulativeMemory;
     private final DataSize totalMemoryReservation;
-    private final DataSize peakMemoryReservation;
+    private final DataSize peakUserMemoryReservation;
+    private final DataSize peakTotalMemoryReservation;
 
     private final boolean scheduled;
     private final Duration totalScheduledTime;
@@ -81,6 +82,8 @@ public class QueryStats
 
     private final DataSize outputDataSize;
     private final long outputPositions;
+
+    private final DataSize physicalWrittenDataSize;
 
     private final List<OperatorStats> operatorSummaries;
 
@@ -107,7 +110,8 @@ public class QueryStats
         this.completedDrivers = 0;
         this.cumulativeMemory = 0.0;
         this.totalMemoryReservation = null;
-        this.peakMemoryReservation = null;
+        this.peakUserMemoryReservation = null;
+        this.peakTotalMemoryReservation = null;
         this.scheduled = false;
         this.totalScheduledTime = null;
         this.totalCpuTime = null;
@@ -121,6 +125,7 @@ public class QueryStats
         this.processedInputPositions = 0;
         this.outputDataSize = null;
         this.outputPositions = 0;
+        this.physicalWrittenDataSize = null;
         this.operatorSummaries = null;
     }
 
@@ -150,7 +155,8 @@ public class QueryStats
 
             @JsonProperty("cumulativeMemory") double cumulativeMemory,
             @JsonProperty("totalMemoryReservation") DataSize totalMemoryReservation,
-            @JsonProperty("peakMemoryReservation") DataSize peakMemoryReservation,
+            @JsonProperty("peakUserMemoryReservation") DataSize peakMemoryReservation,
+            @JsonProperty("peakTotalMemoryReservation") DataSize peakTotalMemoryReservation,
 
             @JsonProperty("scheduled") boolean scheduled,
             @JsonProperty("totalScheduledTime") Duration totalScheduledTime,
@@ -168,6 +174,8 @@ public class QueryStats
 
             @JsonProperty("outputDataSize") DataSize outputDataSize,
             @JsonProperty("outputPositions") long outputPositions,
+
+            @JsonProperty("physicalWrittenDataSize") DataSize physicalWrittenDataSize,
 
             @JsonProperty("operatorSummaries") List<OperatorStats> operatorSummaries)
     {
@@ -203,7 +211,8 @@ public class QueryStats
 
         this.cumulativeMemory = requireNonNull(cumulativeMemory, "cumulativeMemory is null");
         this.totalMemoryReservation = requireNonNull(totalMemoryReservation, "totalMemoryReservation is null");
-        this.peakMemoryReservation = requireNonNull(peakMemoryReservation, "peakMemoryReservation is null");
+        this.peakUserMemoryReservation = requireNonNull(peakMemoryReservation, "peakUserMemoryReservation is null");
+        this.peakTotalMemoryReservation = requireNonNull(peakTotalMemoryReservation, "peakTotalMemoryReservation is null");
         this.scheduled = scheduled;
         this.totalScheduledTime = requireNonNull(totalScheduledTime, "totalScheduledTime is null");
         this.totalCpuTime = requireNonNull(totalCpuTime, "totalCpuTime is null");
@@ -223,6 +232,9 @@ public class QueryStats
         this.outputDataSize = requireNonNull(outputDataSize, "outputDataSize is null");
         checkArgument(outputPositions >= 0, "outputPositions is negative");
         this.outputPositions = outputPositions;
+
+        this.physicalWrittenDataSize = requireNonNull(physicalWrittenDataSize, "physicalWrittenDataSize is null");
+
         this.operatorSummaries = ImmutableList.copyOf(requireNonNull(operatorSummaries, "operatorSummaries is null"));
     }
 
@@ -259,6 +271,10 @@ public class QueryStats
     @JsonProperty
     public Duration getQueuedTime()
     {
+        if (queuedTime == null) {
+            // counter-intuitively, this means that the query is still queued
+            return elapsedTime;
+        }
         return queuedTime;
     }
 
@@ -269,7 +285,8 @@ public class QueryStats
             // counter-intuitively, this means that the query is still queued
             return new Duration(0, NANOSECONDS);
         }
-        return succinctNanos((long) elapsedTime.getValue(NANOSECONDS) - (long) queuedTime.getValue(NANOSECONDS));
+        long executionNanos = (long) elapsedTime.getValue(NANOSECONDS) - (long) queuedTime.getValue(NANOSECONDS);
+        return succinctNanos(Math.max(0, executionNanos));
     }
 
     @JsonProperty
@@ -357,9 +374,15 @@ public class QueryStats
     }
 
     @JsonProperty
-    public DataSize getPeakMemoryReservation()
+    public DataSize getPeakUserMemoryReservation()
     {
-        return peakMemoryReservation;
+        return peakUserMemoryReservation;
+    }
+
+    @JsonProperty
+    public DataSize getPeakTotalMemoryReservation()
+    {
+        return peakTotalMemoryReservation;
     }
 
     @JsonProperty
@@ -441,6 +464,12 @@ public class QueryStats
     }
 
     @JsonProperty
+    public DataSize getPhysicalWrittenDataSize()
+    {
+        return physicalWrittenDataSize;
+    }
+
+    @JsonProperty
     public long getWrittenPositions()
     {
         return operatorSummaries.stream()
@@ -450,7 +479,7 @@ public class QueryStats
     }
 
     @JsonProperty
-    public DataSize getWrittenDataSize()
+    public DataSize getLogicalWrittenDataSize()
     {
         return succinctBytes(
                 operatorSummaries.stream()

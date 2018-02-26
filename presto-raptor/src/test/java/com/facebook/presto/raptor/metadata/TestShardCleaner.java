@@ -36,7 +36,6 @@ import org.testng.annotations.Test;
 
 import java.io.File;
 import java.io.IOException;
-import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.util.ArrayList;
 import java.util.List;
@@ -71,7 +70,6 @@ public class TestShardCleaner
 
     @BeforeMethod
     public void setup()
-            throws Exception
     {
         dbi = new DBI("jdbc:h2:mem:test" + System.nanoTime());
         dummyHandle = dbi.open();
@@ -118,7 +116,6 @@ public class TestShardCleaner
 
     @Test
     public void testAbortOldTransactions()
-            throws Exception
     {
         TestingDao dao = dbi.onDemand(TestingDao.class);
 
@@ -146,7 +143,6 @@ public class TestShardCleaner
 
     @Test
     public void testDeleteOldShards()
-            throws Exception
     {
         assertEquals(cleaner.getBackupShardsQueued().getTotalCount(), 0);
 
@@ -188,6 +184,51 @@ public class TestShardCleaner
         assertQuery("SELECT shard_uuid FROM deleted_shards",
                 row(shard1),
                 row(shard2));
+    }
+
+    @Test
+    public void testCleanLocalShardsImmediately()
+            throws Exception
+    {
+        assertEquals(cleaner.getLocalShardsCleaned().getTotalCount(), 0);
+        TestingShardDao shardDao = dbi.onDemand(TestingShardDao.class);
+        MetadataDao metadataDao = dbi.onDemand(MetadataDao.class);
+
+        long tableId = metadataDao.insertTable("test", "test", false, false, null, 0);
+
+        UUID shard1 = randomUUID();
+        UUID shard2 = randomUUID();
+        UUID shard3 = randomUUID();
+
+        Set<UUID> shards = ImmutableSet.of(shard1, shard2, shard3);
+
+        for (UUID shard : shards) {
+            shardDao.insertShard(shard, tableId, null, 0, 0, 0, 0);
+            createShardFile(shard);
+            assertTrue(shardFileExists(shard));
+        }
+
+        int node1 = shardDao.insertNode("node1");
+        int node2 = shardDao.insertNode("node2");
+
+        // shard 1: referenced by this node
+        // shard 2: not referenced
+        // shard 3: referenced by other node
+
+        shardDao.insertShardNode(shard1, node1);
+        shardDao.insertShardNode(shard3, node2);
+
+        // clean shards immediately
+        Set<UUID> local = cleaner.getLocalShards();
+        cleaner.cleanLocalShardsImmediately(local);
+
+        assertEquals(cleaner.getLocalShardsCleaned().getTotalCount(), 2);
+
+        // shards 2 and 3 should be deleted
+        // shard 1 is referenced by this node
+        assertTrue(shardFileExists(shard1));
+        assertFalse(shardFileExists(shard2));
+        assertFalse(shardFileExists(shard3));
     }
 
     @Test
@@ -296,7 +337,6 @@ public class TestShardCleaner
 
     @Test
     public void testDeleteOldCompletedTransactions()
-            throws Exception
     {
         TestingDao dao = dbi.onDemand(TestingDao.class);
         ShardDao shardDao = dbi.onDemand(ShardDao.class);
@@ -375,13 +415,11 @@ public class TestShardCleaner
 
     @SafeVarargs
     private final void assertQuery(@Language("SQL") String sql, List<Object>... rows)
-            throws SQLException
     {
         assertEqualsIgnoreOrder(select(sql), asList(rows));
     }
 
     private List<List<Object>> select(@Language("SQL") String sql)
-            throws SQLException
     {
         return dbi.withHandle(handle -> handle.createQuery(sql)
                 .map((index, rs, context) -> {

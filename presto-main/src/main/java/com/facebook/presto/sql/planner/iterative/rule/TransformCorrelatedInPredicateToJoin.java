@@ -23,8 +23,6 @@ import com.facebook.presto.sql.planner.SymbolAllocator;
 import com.facebook.presto.sql.planner.SymbolsExtractor;
 import com.facebook.presto.sql.planner.iterative.Lookup;
 import com.facebook.presto.sql.planner.iterative.Rule;
-import com.facebook.presto.sql.planner.optimizations.TransformCorrelatedScalarAggregationToJoin;
-import com.facebook.presto.sql.planner.optimizations.TransformUncorrelatedInPredicateSubqueryToSemiJoin;
 import com.facebook.presto.sql.planner.plan.AggregationNode;
 import com.facebook.presto.sql.planner.plan.ApplyNode;
 import com.facebook.presto.sql.planner.plan.AssignUniqueId;
@@ -93,7 +91,6 @@ import static java.util.Objects.requireNonNull;
  * <p>
  *
  * @see TransformCorrelatedScalarAggregationToJoin
- * @see TransformUncorrelatedInPredicateSubqueryToSemiJoin
  */
 public class TransformCorrelatedInPredicateToJoin
         implements Rule<ApplyNode>
@@ -108,15 +105,15 @@ public class TransformCorrelatedInPredicateToJoin
     }
 
     @Override
-    public Optional<PlanNode> apply(ApplyNode apply, Captures captures, Context context)
+    public Result apply(ApplyNode apply, Captures captures, Context context)
     {
         Assignments subqueryAssignments = apply.getSubqueryAssignments();
         if (subqueryAssignments.size() != 1) {
-            return Optional.empty();
+            return Result.empty();
         }
         Expression assignmentExpression = getOnlyElement(subqueryAssignments.getExpressions());
         if (!(assignmentExpression instanceof InPredicate)) {
-            return Optional.empty();
+            return Result.empty();
         }
 
         InPredicate inPredicate = (InPredicate) assignmentExpression;
@@ -125,7 +122,7 @@ public class TransformCorrelatedInPredicateToJoin
         return apply(apply, inPredicate, inPredicateOutputSymbol, context.getLookup(), context.getIdAllocator(), context.getSymbolAllocator());
     }
 
-    private Optional<PlanNode> apply(
+    private Result apply(
             ApplyNode apply,
             InPredicate inPredicate,
             Symbol inPredicateOutputSymbol,
@@ -137,7 +134,7 @@ public class TransformCorrelatedInPredicateToJoin
                 .decorrelate(apply.getSubquery());
 
         if (!decorrelated.isPresent()) {
-            return Optional.empty();
+            return Result.empty();
         }
 
         PlanNode projection = buildInPredicateEquivalent(
@@ -148,7 +145,7 @@ public class TransformCorrelatedInPredicateToJoin
                 idAllocator,
                 symbolAllocator);
 
-        return Optional.of(projection);
+        return Result.ofPlanNode(projection);
     }
 
     private PlanNode buildInPredicateEquivalent(
@@ -250,6 +247,7 @@ public class TransformCorrelatedInPredicateToJoin
                 QualifiedName.of("count"),
                 Optional.<Window>empty(),
                 Optional.of(condition),
+                Optional.empty(),
                 false,
                 ImmutableList.<Expression>of()); /* arguments */
 
@@ -290,9 +288,6 @@ public class TransformCorrelatedInPredicateToJoin
         return new BooleanLiteral(value.toString());
     }
 
-    /**
-     * TODO consult comon parts with {@link com.facebook.presto.sql.planner.optimizations.TransformCorrelatedScalarAggregationToJoin.Rewriter#decorrelateFilters}
-     */
     private static class DecorrelatingVisitor
             extends PlanVisitor<Optional<Decorrelated>, PlanNode>
     {

@@ -18,11 +18,8 @@ import com.facebook.presto.matching.Captures;
 import com.facebook.presto.matching.Pattern;
 import com.facebook.presto.sql.planner.iterative.Rule;
 import com.facebook.presto.sql.planner.plan.LimitNode;
-import com.facebook.presto.sql.planner.plan.PlanNode;
 import com.facebook.presto.sql.planner.plan.SortNode;
 import com.facebook.presto.sql.planner.plan.TopNNode;
-
-import java.util.Optional;
 
 import static com.facebook.presto.matching.Capture.newCapture;
 import static com.facebook.presto.sql.planner.plan.Patterns.limit;
@@ -44,17 +41,16 @@ public class MergeLimitWithSort
     }
 
     @Override
-    public Optional<PlanNode> apply(LimitNode parent, Captures captures, Context context)
+    public Result apply(LimitNode parent, Captures captures, Context context)
     {
         SortNode child = captures.get(CHILD);
 
-        return Optional.of(
+        return Result.ofPlanNode(
                 new TopNNode(
                         parent.getId(),
                         child.getSource(),
                         parent.getCount(),
-                        child.getOrderBy(),
-                        child.getOrderings(),
+                        child.getOrderingScheme(),
                         parent.isPartial() ? TopNNode.Step.PARTIAL : TopNNode.Step.SINGLE));
     }
 }

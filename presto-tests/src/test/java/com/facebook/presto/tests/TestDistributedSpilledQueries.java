@@ -28,12 +28,11 @@ public class TestDistributedSpilledQueries
         extends AbstractTestQueries
 {
     public TestDistributedSpilledQueries()
-            throws Exception
     {
         super(TestDistributedSpilledQueries::createQueryRunner);
     }
 
-    private static DistributedQueryRunner createQueryRunner()
+    public static DistributedQueryRunner createQueryRunner()
             throws Exception
     {
         Session defaultSession = testSessionBuilder()
@@ -62,5 +61,12 @@ public class TestDistributedSpilledQueries
             queryRunner.close();
             throw e;
         }
+    }
+
+    @Override
+    public void testAssignUniqueId()
+    {
+        // TODO: disabled until https://github.com/prestodb/presto/issues/8926 is resolved
+        //       due to long running query test created many spill files on disk.
     }
 }

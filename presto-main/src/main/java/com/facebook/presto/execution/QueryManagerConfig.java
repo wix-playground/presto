@@ -48,22 +48,24 @@ public class QueryManagerConfig
 
     private int queryManagerExecutorPoolSize = 5;
 
-    private Duration remoteTaskMinErrorDuration = new Duration(2, TimeUnit.MINUTES);
     private Duration remoteTaskMaxErrorDuration = new Duration(5, TimeUnit.MINUTES);
     private int remoteTaskMaxCallbackThreads = 1000;
 
     private String queryExecutionPolicy = "all-at-once";
     private Duration queryMaxRunTime = new Duration(100, TimeUnit.DAYS);
+    private Duration queryMaxExecutionTime = new Duration(100, TimeUnit.DAYS);
     private Duration queryMaxCpuTime = new Duration(1_000_000_000, TimeUnit.DAYS);
 
     private int initializationRequiredWorkers = 1;
     private Duration initializationTimeout = new Duration(5, TimeUnit.MINUTES);
 
+    @Deprecated
     public String getQueueConfigFile()
     {
         return queueConfigFile;
     }
 
+    @Deprecated
     @Config("query.queue-config-file")
     public QueryManagerConfig setQueueConfigFile(String queueConfigFile)
     {
@@ -208,17 +210,16 @@ public class QueryManagerConfig
         return this;
     }
 
-    @NotNull
-    @MinDuration("1s")
+    @Deprecated
     public Duration getRemoteTaskMinErrorDuration()
     {
-        return remoteTaskMinErrorDuration;
+        return remoteTaskMaxErrorDuration;
     }
 
+    @Deprecated
     @Config("query.remote-task.min-error-duration")
     public QueryManagerConfig setRemoteTaskMinErrorDuration(Duration remoteTaskMinErrorDuration)
     {
-        this.remoteTaskMinErrorDuration = remoteTaskMinErrorDuration;
         return this;
     }
 
@@ -246,6 +247,19 @@ public class QueryManagerConfig
     public QueryManagerConfig setQueryMaxRunTime(Duration queryMaxRunTime)
     {
         this.queryMaxRunTime = queryMaxRunTime;
+        return this;
+    }
+
+    @NotNull
+    public Duration getQueryMaxExecutionTime()
+    {
+        return queryMaxExecutionTime;
+    }
+
+    @Config("query.max-execution-time")
+    public QueryManagerConfig setQueryMaxExecutionTime(Duration queryMaxExecutionTime)
+    {
+        this.queryMaxExecutionTime = queryMaxExecutionTime;
         return this;
     }
 

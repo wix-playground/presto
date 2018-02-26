@@ -22,6 +22,7 @@ import org.openjdk.jol.info.ClassLayout;
 
 import static com.google.common.base.Preconditions.checkArgument;
 import static it.unimi.dsi.fastutil.HashCommon.arraySize;
+import static java.lang.Math.min;
 import static java.util.Objects.requireNonNull;
 
 // TODO this class is not memory efficient.  We can bypass all of the Presto type and block code
@@ -50,10 +51,12 @@ public class DictionaryBuilder
 
         // todo we can do better
         BlockBuilderStatus blockBuilderStatus = new BlockBuilderStatus();
+        int expectedEntries = min(expectedSize, blockBuilderStatus.getMaxBlockSizeInBytes() / EXPECTED_BYTES_PER_ENTRY);
+        // it is guaranteed expectedEntries * EXPECTED_BYTES_PER_ENTRY will not overflow
         this.elementBlock = new VariableWidthBlockBuilder(
                 blockBuilderStatus,
-                Math.min(expectedSize, blockBuilderStatus.getMaxBlockSizeInBytes() / EXPECTED_BYTES_PER_ENTRY),
-                EXPECTED_BYTES_PER_ENTRY);
+                expectedEntries,
+                expectedEntries * EXPECTED_BYTES_PER_ENTRY);
 
         // first position is always null
         this.elementBlock.appendNull();
@@ -135,6 +138,11 @@ public class DictionaryBuilder
         int length = block.getSliceLength(position);
         long hashPosition = getMaskedHash(block.hash(position, 0, length));
         while (true) {
+            if (hashPosition == NULL_POSITION) {
+                // Need to skip the reserved null slot
+                hashPosition = getMaskedHash(hashPosition + 1);
+            }
+
             int blockPosition = blockPositionByHash.get(hashPosition);
             if (blockPosition == EMPTY_SLOT) {
                 // Doesn't have this element

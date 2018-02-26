@@ -31,16 +31,35 @@ public class SingleRowBlockWriter
     private int positionsWritten;
 
     private int currentFieldIndexToWrite;
+    private boolean fieldBlockBuilderReturned;
 
-    SingleRowBlockWriter(int startOffset, BlockBuilder[] fieldBlockBuilders)
+    SingleRowBlockWriter(int rowIndex, BlockBuilder[] fieldBlockBuilders)
     {
-        super(startOffset, fieldBlockBuilders.length);
+        super(rowIndex);
         this.fieldBlockBuilders = fieldBlockBuilders;
         long initialBlockBuilderSize = 0;
         for (int i = 0; i < fieldBlockBuilders.length; i++) {
             initialBlockBuilderSize += fieldBlockBuilders[i].getSizeInBytes();
         }
         this.initialBlockBuilderSize = initialBlockBuilderSize;
+    }
+
+    /**
+     * Obtains the field {@code BlockBuilder}.
+     * <p>
+     * This method is used to perform random write to {@code SingleRowBlockWriter}.
+     * Each field {@code BlockBuilder} must be written EXACTLY once.
+     * <p>
+     * Field {@code BlockBuilder} can only be obtained before any sequential write has done.
+     * Once obtained, sequential write is no longer allowed.
+     */
+    public BlockBuilder getFieldBlockBuilder(int fieldIndex)
+    {
+        if (currentFieldIndexToWrite != 0) {
+            throw new IllegalStateException("field block builder can only be obtained before any sequential write has done");
+        }
+        fieldBlockBuilderReturned = true;
+        return fieldBlockBuilders[fieldIndex];
     }
 
     @Override
@@ -53,7 +72,7 @@ public class SingleRowBlockWriter
     public long getSizeInBytes()
     {
         long currentBlockBuilderSize = 0;
-        for (int i = 0; i < numFields; i++) {
+        for (int i = 0; i < fieldBlockBuilders.length; i++) {
             currentBlockBuilderSize += fieldBlockBuilders[i].getSizeInBytes();
         }
         return currentBlockBuilderSize - initialBlockBuilderSize;
@@ -63,7 +82,7 @@ public class SingleRowBlockWriter
     public long getRetainedSizeInBytes()
     {
         long size = INSTANCE_SIZE;
-        for (int i = 0; i < numFields; i++) {
+        for (int i = 0; i < fieldBlockBuilders.length; i++) {
             size += fieldBlockBuilders[i].getRetainedSizeInBytes();
         }
         return size;
@@ -72,7 +91,7 @@ public class SingleRowBlockWriter
     @Override
     public void retainedBytesForEachPart(BiConsumer<Object, Long> consumer)
     {
-        for (int i = 0; i < numFields; i++) {
+        for (int i = 0; i < fieldBlockBuilders.length; i++) {
             consumer.accept(fieldBlockBuilders[i], fieldBlockBuilders[i].getRetainedSizeInBytes());
         }
         consumer.accept(this, (long) INSTANCE_SIZE);
@@ -160,6 +179,9 @@ public class SingleRowBlockWriter
     @Override
     public int getPositionCount()
     {
+        if (fieldBlockBuilderReturned) {
+            throw new IllegalStateException("field block builder has been returned");
+        }
         return positionsWritten;
     }
 
@@ -184,12 +206,20 @@ public class SingleRowBlockWriter
     @Override
     public String toString()
     {
-        return format("RowBlock{SingleRowBlockWriter=%d, positionCount=%d", numFields, getPositionCount());
+        if (!fieldBlockBuilderReturned) {
+            return format("RowBlock{SingleRowBlockWriter=%d, fieldBlockBuilderReturned=false, positionCount=%d}", fieldBlockBuilders.length, getPositionCount());
+        }
+        else {
+            return format("RowBlock{SingleRowBlockWriter=%d, fieldBlockBuilderReturned=true}", fieldBlockBuilders.length);
+        }
     }
 
     private void checkFieldIndexToWrite()
     {
-        if (currentFieldIndexToWrite >= numFields) {
+        if (fieldBlockBuilderReturned) {
+            throw new IllegalStateException("cannot do sequential write after getFieldBlockBuilder is called");
+        }
+        if (currentFieldIndexToWrite >= fieldBlockBuilders.length) {
             throw new IllegalStateException("currentFieldIndexToWrite is not valid");
         }
     }
