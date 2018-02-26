@@ -115,7 +115,7 @@ public class PrestoConnection
             throws SQLException
     {
         checkOpen();
-        throw new NotImplementedException("Connection", "prepareStatement");
+        return new PrestoPreparedStatement(this, sql);
     }
 
     @Override
@@ -630,7 +630,7 @@ public class PrestoConnection
                 readOnly.get() ? "ONLY" : "WRITE");
     }
 
-    StatementClient startQuery(String sql, Map<String, String> sessionPropertiesOverride)
+    ClientSession createSession(Map<String, String> sessionPropertiesOverride)
     {
         String source = firstNonNull(clientInfo.get("ApplicationName"), "presto-jdbc");
 
@@ -644,7 +644,7 @@ public class PrestoConnection
         int millis = networkTimeoutMillis.get();
         Duration timeout = (millis > 0) ? new Duration(millis, MILLISECONDS) : new Duration(999, DAYS);
 
-        ClientSession session = new ClientSession(
+        return new ClientSession(
                 httpUri,
                 user,
                 source,
@@ -658,7 +658,10 @@ public class PrestoConnection
                 ImmutableMap.copyOf(preparedStatements),
                 transactionId.get(),
                 timeout);
+    }
 
+    StatementClient startQuery(ClientSession session, String sql)
+    {
         return queryExecutor.startQuery(session, sql);
     }
 

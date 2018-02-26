@@ -14,6 +14,7 @@
 package com.facebook.presto.jdbc;
 
 import com.facebook.presto.client.ClientException;
+import com.facebook.presto.client.ClientSession;
 import com.facebook.presto.client.QueryStatusInfo;
 import com.facebook.presto.client.StatementClient;
 import com.google.common.collect.ImmutableMap;
@@ -72,7 +73,13 @@ public class PrestoStatement
     public ResultSet executeQuery(String sql)
             throws SQLException
     {
-        if (!execute(sql)) {
+        return executeQuery(connection.get().createSession(getStatementSessionProperties()), sql);
+    }
+
+    public ResultSet executeQuery(ClientSession session, String sql)
+            throws SQLException
+    {
+        if (!execute(session, sql)) {
             throw new SQLException("SQL statement is not a query: " + sql);
         }
         return currentResult.get();
@@ -206,7 +213,7 @@ public class PrestoStatement
         // ignore: positioned modifications not supported
     }
 
-    private Map<String, String> getStatementSessionProperties()
+    Map<String, String> getStatementSessionProperties()
     {
         ImmutableMap.Builder<String, String> sessionProperties = ImmutableMap.builder();
         if (queryTimeoutSeconds.get() > 0) {
@@ -219,13 +226,25 @@ public class PrestoStatement
     public boolean execute(String sql)
             throws SQLException
     {
+        return execute(connection.get().createSession(getStatementSessionProperties()), sql);
+    }
+
+    protected boolean execute(ClientSession session, String sql)
+            throws SQLException
+    {
         if (connection().shouldStartTransaction()) {
-            internalExecute(connection().getStartTransactionSql());
+            internalExecute(session, connection().getStartTransactionSql());
         }
-        return internalExecute(sql);
+        return internalExecute(session, sql);
     }
 
     boolean internalExecute(String sql)
+            throws SQLException
+    {
+        return internalExecute(connection.get().createSession(getStatementSessionProperties()), sql);
+    }
+
+    boolean internalExecute(ClientSession session, String sql)
             throws SQLException
     {
         clearCurrentResults();
@@ -234,7 +253,7 @@ public class PrestoStatement
         StatementClient client = null;
         ResultSet resultSet = null;
         try {
-            client = connection().startQuery(sql, getStatementSessionProperties());
+            client = connection().startQuery(session, sql);
             if (client.isFinished()) {
                 QueryStatusInfo finalStatusInfo = client.finalStatusInfo();
                 if (finalStatusInfo.getError() != null) {
@@ -464,7 +483,13 @@ public class PrestoStatement
     public long executeLargeUpdate(String sql)
             throws SQLException
     {
-        if (execute(sql)) {
+        return executeLargeUpdate(connection.get().createSession(getStatementSessionProperties()), sql);
+    }
+
+    protected long executeLargeUpdate(ClientSession session, String sql)
+            throws SQLException
+    {
+        if (execute(session, sql)) {
             throw new SQLException("SQL is not an update statement: " + sql);
         }
         return currentUpdateCount.get();
