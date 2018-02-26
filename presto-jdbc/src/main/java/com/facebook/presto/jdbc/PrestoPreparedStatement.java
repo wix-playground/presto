@@ -90,7 +90,7 @@ public class PrestoPreparedStatement
     public void setNull(int parameterIndex, int sqlType)
             throws SQLException
     {
-        setParameter(parameterIndex, formatCast(formatNullLiteral(), sqlType));
+        setParameter(parameterIndex, formatNullLiteral());
     }
 
     @Override

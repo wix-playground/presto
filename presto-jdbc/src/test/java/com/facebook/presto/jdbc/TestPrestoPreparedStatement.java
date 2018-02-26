@@ -113,7 +113,7 @@ public class TestPrestoPreparedStatement
                 ResultSet rs = statement.executeQuery();
                 assertTrue(rs.next());
 
-                //assertEquals(rs.getObject(1), null);
+                assertEquals(rs.getObject(1), null);
                 assertEquals(rs.getBoolean(2), true);
                 assertEquals(rs.getShort(3), (short) 3);
                 assertEquals(rs.getInt(4), 4);
