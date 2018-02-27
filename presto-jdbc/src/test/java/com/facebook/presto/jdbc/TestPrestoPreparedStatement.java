@@ -24,16 +24,7 @@ import org.testng.annotations.BeforeClass;
 import org.testng.annotations.Test;
 
 import java.math.BigDecimal;
-import java.sql.Connection;
-import java.sql.Date;
-import java.sql.DriverManager;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
-import java.sql.SQLException;
-import java.sql.Statement;
-import java.sql.Time;
-import java.sql.Timestamp;
-import java.sql.Types;
+import java.sql.*;
 import java.util.GregorianCalendar;
 
 import static io.airlift.testing.Assertions.assertLessThan;
@@ -83,6 +74,22 @@ public class TestPrestoPreparedStatement
         try (Connection connection = createConnection("blackhole", "blackhole");
              Statement statement = connection.createStatement()) {
             assertEquals(statement.executeUpdate("CREATE SCHEMA blackhole.blackhole"), 0);
+
+            try (Statement st1 = connection.createStatement()) {
+                st1.execute("CREATE TABLE test_execute_update (" +
+                        "c_null boolean, " +
+                        "c_boolean boolean, " +
+                        "c_integer integer, " +
+                        "c_bigint bigint, " +
+                        "c_real real, " +
+                        "c_double double, " +
+                        "c_decimal decimal, " +
+                        "c_varchar varchar, " +
+                        "c_date date, " +
+                        "c_time time, " +
+                        "c_timestamp timestamp" +
+                        ")");
+            }
         }
     }
 
@@ -135,22 +142,6 @@ public class TestPrestoPreparedStatement
             throws Exception
     {
         try (Connection connection = createConnection("blackhole", "blackhole")) {
-            try (Statement statement = connection.createStatement()) {
-                statement.execute("CREATE TABLE test_execute_update (" +
-                        "c_null boolean, " +
-                        "c_boolean boolean, " +
-                        "c_integer integer, " +
-                        "c_bigint bigint, " +
-                        "c_real real, " +
-                        "c_double double, " +
-                        "c_decimal decimal, " +
-                        "c_varchar varchar, " +
-                        "c_date date, " +
-                        "c_time time, " +
-                        "c_timestamp timestamp" +
-                        ")");
-            }
-
             try (PreparedStatement statement = connection.prepareStatement("INSERT INTO test_execute_update VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")) {
                 statement.setNull(1, Types.BOOLEAN);
                 statement.setBoolean(2, true);
@@ -181,6 +172,57 @@ public class TestPrestoPreparedStatement
                 assertEquals(new Timestamp(10), rs.getTimestamp(10));
                 assertFalse(rs.next());
             }*/
+        }
+    }
+
+    @Test
+    public void testGetMetadata()
+            throws Exception
+    {
+        try (Connection connection = createConnection()) {
+            try (PreparedStatement statement = connection.prepareStatement("SELECT 1 as intval, ? as unknownval")) {
+                ResultSetMetaData metadata = statement.getMetaData();
+                assertEquals(metadata.getColumnCount(), 2);
+
+                assertEquals(metadata.getCatalogName(1), "");
+                assertEquals(metadata.getSchemaName(1), "");
+                assertEquals(metadata.getTableName(1), "");
+                assertEquals(metadata.getColumnClassName(1), "java.lang.Integer");
+                assertEquals(metadata.getColumnDisplaySize(1), 11);
+                assertEquals(metadata.getColumnLabel(1), "intval");
+                assertEquals(metadata.getColumnName(1), "intval");
+                assertEquals(metadata.getColumnType(1), Types.INTEGER);
+                assertEquals(metadata.getColumnTypeName(1), "integer");
+                assertEquals(metadata.getPrecision(1), 10);
+                assertEquals(metadata.getScale(1), 0);
+                assertEquals(metadata.isSigned(1), true);
+
+                assertEquals(metadata.getColumnLabel(2), "unknownval");
+                assertEquals(metadata.getColumnName(2), "unknownval");
+                assertEquals(metadata.getColumnTypeName(2), "unknown");
+            }
+        }
+    }
+
+    @Test
+    public void testGetParameterMetadata()
+            throws Exception
+    {
+        try (Connection connection = createConnection("blackhole", "blackhole")) {
+            try (PreparedStatement statement = connection.prepareStatement("SELECT *, ? as unknownval FROM test_execute_update WHERE c_boolean = ?")) {
+                ParameterMetaData metadata = statement.getParameterMetaData();
+                assertEquals(metadata.getParameterCount(), 2);
+
+                assertEquals(metadata.getParameterTypeName(1), "unknown");
+
+                assertEquals(metadata.getParameterTypeName(2), "boolean");
+                assertEquals(metadata.getParameterType(2), Types.BOOLEAN);
+                assertEquals(metadata.getParameterClassName(2), "java.lang.Boolean");
+                assertEquals(metadata.getParameterMode(2), ParameterMetaData.parameterModeIn);
+                assertEquals(metadata.getPrecision(2), 0);
+                assertEquals(metadata.getScale(2), 0);
+                assertEquals(metadata.isSigned(2), false);
+            }
         }
     }
 

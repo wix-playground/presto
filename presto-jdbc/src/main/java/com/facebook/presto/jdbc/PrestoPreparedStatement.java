@@ -15,6 +15,7 @@ package com.facebook.presto.jdbc;
 
 import com.facebook.presto.client.ClientSession;
 import com.google.common.base.Joiner;
+import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.primitives.Ints;
 
@@ -44,6 +45,8 @@ import java.util.Calendar;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+
+import static com.facebook.presto.spi.type.TypeSignature.parseTypeSignature;
 
 public class PrestoPreparedStatement
         extends PrestoStatement
@@ -388,7 +391,25 @@ public class PrestoPreparedStatement
     public ResultSetMetaData getMetaData()
             throws SQLException
     {
-        throw new SQLFeatureNotSupportedException("getMetaData");
+        PrestoStatement statement = (PrestoStatement) getConnection().createStatement();
+        ResultSet rs = statement.executeQuery(session, "DESCRIBE OUTPUT " + queryName);
+
+        ImmutableList.Builder<ColumnInfo> list = ImmutableList.builder();
+
+        while (rs.next()) {
+            ColumnInfo.Builder builder = new ColumnInfo.Builder()
+                    .setCatalogName(rs.getString(2))
+                    .setSchemaName(rs.getString(3))
+                    .setTableName(rs.getString(4))
+                    .setColumnLabel(rs.getString(1))
+                    .setColumnName(rs.getString(1))
+                    .setColumnTypeSignature(parseTypeSignature(rs.getString(5)))
+                    .setNullable(ColumnInfo.Nullable.NULLABLE)
+                    .setCurrency(false);
+            ColumnInfo.setTypeInfo(builder, parseTypeSignature(rs.getString(5)));
+            list.add(builder.build());
+        }
+        return new PrestoResultSetMetaData(list.build());
     }
 
     @Override
@@ -430,7 +451,20 @@ public class PrestoPreparedStatement
     public ParameterMetaData getParameterMetaData()
             throws SQLException
     {
-        throw new NotImplementedException("PreparedStatement", "getParameterMetaData");
+        PrestoStatement statement = (PrestoStatement) getConnection().createStatement();
+        ResultSet rs = statement.executeQuery(session, "DESCRIBE INPUT " + queryName);
+
+        ImmutableList.Builder<ParameterInfo> list = ImmutableList.builder();
+
+        while (rs.next()) {
+            ParameterInfo.Builder builder = new ParameterInfo.Builder()
+                    .setPosition(rs.getInt(1))
+                    .setParameterTypeSignature(parseTypeSignature(rs.getString(2)))
+                    .setNullable(ColumnInfo.Nullable.NULLABLE);
+            ParameterInfo.setTypeInfo(builder, parseTypeSignature(rs.getString(2)));
+            list.add(builder.build());
+        }
+        return new PrestoParameterMetaData(list.build());
     }
 
     @Override
