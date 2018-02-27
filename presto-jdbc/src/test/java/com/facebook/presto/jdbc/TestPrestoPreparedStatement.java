@@ -138,6 +138,47 @@ public class TestPrestoPreparedStatement
     }
 
     @Test
+    public void testSubstitutionParamsSeveralTimes()
+            throws Exception
+    {
+        try (Connection connection = createConnection()) {
+            try (PreparedStatement statement = connection.prepareStatement("SELECT ?")) {
+                statement.setBoolean(1, true);
+                ResultSet rs1 = statement.executeQuery();
+                assertTrue(rs1.next());
+                assertTrue(rs1.getBoolean(1));
+
+                statement.setString(1, "foo");
+                ResultSet rs2 = statement.executeQuery();
+
+                assertTrue(rs2.next());
+                assertEquals(rs2.getString(1), "foo");
+            }
+        }
+    }
+
+    @Test
+    public void testCleaningUpResources()
+            throws Exception
+    {
+        try (Connection connection = createConnection()) {
+            ResultSet rs1;
+            ResultSet rs2;
+
+            try (PreparedStatement statement = connection.prepareStatement("SELECT ?")) {
+                statement.setNull(1, Types.VARCHAR);
+                rs1 = statement.executeQuery();
+                assertFalse(rs1.isClosed());
+
+                rs2 = statement.executeQuery();
+                assertTrue(rs1.isClosed());
+                assertFalse(rs2.isClosed());
+            }
+            assertTrue(rs2.isClosed());
+        }
+    }
+
+    @Test
     public void testExecuteUpdate()
             throws Exception
     {

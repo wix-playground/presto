@@ -52,25 +52,26 @@ public class PrestoPreparedStatement
         extends PrestoStatement
         implements PreparedStatement
 {
-    private final String originalSql;
     private final String queryName;
     private final ClientSession session;
     private final Map<Integer, String> parameters = new HashMap<>();
+
+    private PrestoStatement statement;
 
     PrestoPreparedStatement(PrestoConnection connection, String sql)
             throws SQLException
     {
         super(connection);
-        this.originalSql = sql;
         this.queryName = "preparedQuery";
-        this.session = ClientSession.withPreparedStatements(connection.createSession(getStatementSessionProperties()), ImmutableMap.of(queryName, originalSql));
+        this.session = ClientSession.withPreparedStatements(connection.createSession(getStatementSessionProperties()), ImmutableMap.of(queryName, sql));
     }
 
     @Override
     public ResultSet executeQuery()
             throws SQLException
     {
-        PrestoStatement statement = (PrestoStatement) getConnection().createStatement();
+        closeCurrentStatement();
+        statement = (PrestoStatement) getConnection().createStatement();
         return statement.executeQuery(session, usingSql());
 
     }
@@ -79,7 +80,8 @@ public class PrestoPreparedStatement
     public int executeUpdate()
             throws SQLException
     {
-        PrestoStatement statement = (PrestoStatement) getConnection().createStatement();
+        closeCurrentStatement();
+        statement = (PrestoStatement) getConnection().createStatement();
         return Ints.saturatedCast(statement.executeLargeUpdate(session, usingSql()));
     }
 
@@ -214,6 +216,21 @@ public class PrestoPreparedStatement
             throws SQLException
     {
         parameters.clear();
+    }
+
+    private void closeCurrentStatement()
+            throws SQLException
+    {
+        if (statement != null) {
+            statement.close();
+        }
+    }
+
+    @Override
+    public void close()
+            throws SQLException
+    {
+        closeCurrentStatement();
     }
 
     @Override
