@@ -73,7 +73,6 @@ public class PrestoPreparedStatement
         closeCurrentStatement();
         statement = (PrestoStatement) getConnection().createStatement();
         return statement.executeQuery(session, usingSql());
-
     }
 
     @Override

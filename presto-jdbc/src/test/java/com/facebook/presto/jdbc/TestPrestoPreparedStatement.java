@@ -23,7 +23,18 @@ import org.testng.annotations.BeforeClass;
 import org.testng.annotations.Test;
 
 import java.math.BigDecimal;
-import java.sql.*;
+import java.sql.Connection;
+import java.sql.Date;
+import java.sql.DriverManager;
+import java.sql.ParameterMetaData;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.ResultSetMetaData;
+import java.sql.SQLException;
+import java.sql.Statement;
+import java.sql.Time;
+import java.sql.Timestamp;
+import java.sql.Types;
 
 import static io.airlift.testing.Assertions.assertLessThan;
 import static io.airlift.units.Duration.nanosSince;
@@ -68,7 +79,7 @@ public class TestPrestoPreparedStatement
             throws SQLException
     {
         try (Connection connection = createConnection("blackhole", "blackhole");
-             Statement statement = connection.createStatement()) {
+                Statement statement = connection.createStatement()) {
             assertEquals(statement.executeUpdate("CREATE SCHEMA blackhole.blackhole"), 0);
 
             try (Statement st1 = connection.createStatement()) {
@@ -273,5 +284,4 @@ public class TestPrestoPreparedStatement
         catch (Exception ignored) {
         }
     }
-
 }

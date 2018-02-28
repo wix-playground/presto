@@ -1,3 +1,16 @@
+/*
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 package com.facebook.presto.jdbc;
 
 import com.facebook.presto.spi.type.TypeSignature;
@@ -7,8 +20,8 @@ import java.sql.Types;
 
 import static java.util.Objects.requireNonNull;
 
-public class ParameterInfo {
-
+public class ParameterInfo
+{
     private static final int VARCHAR_MAX = 1024 * 1024 * 1024;
     private static final int VARBINARY_MAX = 1024 * 1024 * 1024;
     private static final int TIME_ZONE_MAX = 40; // current longest time zone is 32
@@ -43,7 +56,6 @@ public class ParameterInfo {
         this.precision = precision;
         this.scale = scale;
     }
-
 
     public static void setTypeInfo(ParameterInfo.Builder builder, TypeSignature type)
     {
@@ -185,31 +197,38 @@ public class ParameterInfo {
         return parameterTypeSignature.toString();
     }
 
-    public int getPosition() {
+    public int getPosition()
+    {
         return position;
     }
 
-    public int getParameterType() {
+    public int getParameterType()
+    {
         return parameterType;
     }
 
-    public TypeSignature getParameterTypeSignature() {
+    public TypeSignature getParameterTypeSignature()
+    {
         return parameterTypeSignature;
     }
 
-    public ColumnInfo.Nullable getNullable() {
+    public ColumnInfo.Nullable getNullable()
+    {
         return nullable;
     }
 
-    public boolean isSigned() {
+    public boolean isSigned()
+    {
         return signed;
     }
 
-    public int getPrecision() {
+    public int getPrecision()
+    {
         return precision;
     }
 
-    public int getScale() {
+    public int getScale()
+    {
         return scale;
     }
 
@@ -277,5 +296,4 @@ public class ParameterInfo {
                     scale);
         }
     }
-
 }
