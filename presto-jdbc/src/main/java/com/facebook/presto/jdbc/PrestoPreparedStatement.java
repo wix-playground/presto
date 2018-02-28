@@ -45,6 +45,7 @@ import java.util.Calendar;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Function;
 
 import static com.facebook.presto.spi.type.TypeSignature.parseTypeSignature;
 
@@ -53,7 +54,7 @@ public class PrestoPreparedStatement
         implements PreparedStatement
 {
     private final String queryName;
-    private final ClientSession session;
+    private final Function<ClientSession, ClientSession> sessionTransformer;
     private final Map<Integer, String> parameters = new HashMap<>();
 
     private PrestoStatement statement;
@@ -63,7 +64,7 @@ public class PrestoPreparedStatement
     {
         super(connection);
         this.queryName = "preparedQuery";
-        this.session = ClientSession.withPreparedStatements(connection.createSession(getStatementSessionProperties()), ImmutableMap.of(queryName, sql));
+        this.sessionTransformer = clientSession -> ClientSession.withPreparedStatements(clientSession, ImmutableMap.of(queryName, sql));
     }
 
     @Override
@@ -72,7 +73,7 @@ public class PrestoPreparedStatement
     {
         closeCurrentStatement();
         statement = (PrestoStatement) getConnection().createStatement();
-        return statement.executeQuery(session, usingSql());
+        return statement.executeQuery(usingSql(), sessionTransformer);
     }
 
     @Override
@@ -81,7 +82,7 @@ public class PrestoPreparedStatement
     {
         closeCurrentStatement();
         statement = (PrestoStatement) getConnection().createStatement();
-        return Ints.saturatedCast(statement.executeLargeUpdate(session, usingSql()));
+        return Ints.saturatedCast(statement.executeLargeUpdate(usingSql(), sessionTransformer));
     }
 
     private String usingSql()
@@ -408,7 +409,7 @@ public class PrestoPreparedStatement
             throws SQLException
     {
         PrestoStatement statement = (PrestoStatement) getConnection().createStatement();
-        ResultSet rs = statement.executeQuery(session, "DESCRIBE OUTPUT " + queryName);
+        ResultSet rs = statement.executeQuery("DESCRIBE OUTPUT " + queryName, sessionTransformer);
 
         ImmutableList.Builder<ColumnInfo> list = ImmutableList.builder();
 
@@ -468,7 +469,7 @@ public class PrestoPreparedStatement
             throws SQLException
     {
         PrestoStatement statement = (PrestoStatement) getConnection().createStatement();
-        ResultSet rs = statement.executeQuery(session, "DESCRIBE INPUT " + queryName);
+        ResultSet rs = statement.executeQuery("DESCRIBE INPUT " + queryName, sessionTransformer);
 
         ImmutableList.Builder<ParameterInfo> list = ImmutableList.builder();
 

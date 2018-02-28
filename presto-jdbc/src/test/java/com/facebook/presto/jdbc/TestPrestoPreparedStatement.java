@@ -15,7 +15,6 @@ package com.facebook.presto.jdbc;
 
 import com.facebook.presto.plugin.blackhole.BlackHolePlugin;
 import com.facebook.presto.server.testing.TestingPrestoServer;
-import com.facebook.presto.tpch.TpchPlugin;
 import io.airlift.log.Logging;
 import io.airlift.units.Duration;
 import org.testng.annotations.AfterClass;
@@ -36,6 +35,7 @@ import java.sql.Time;
 import java.sql.Timestamp;
 import java.sql.Types;
 
+import static com.facebook.presto.jdbc.TestPrestoDriver.closeQuietly;
 import static io.airlift.testing.Assertions.assertLessThan;
 import static io.airlift.units.Duration.nanosSince;
 import static java.lang.String.format;
@@ -47,8 +47,6 @@ import static org.testng.Assert.assertTrue;
 
 public class TestPrestoPreparedStatement
 {
-    private static final String TEST_CATALOG = "test_catalog";
-
     private TestingPrestoServer server;
 
     @BeforeClass
@@ -57,8 +55,7 @@ public class TestPrestoPreparedStatement
     {
         Logging.initialize();
         server = new TestingPrestoServer();
-        server.installPlugin(new TpchPlugin());
-        server.createCatalog(TEST_CATALOG, "tpch");
+
         server.installPlugin(new BlackHolePlugin());
         server.createCatalog("blackhole", "blackhole");
         waitForNodeRefresh(server);
@@ -274,14 +271,5 @@ public class TestPrestoPreparedStatement
             throws SQLException
     {
         return DriverManager.getConnection(url, "test", null);
-    }
-
-    static void closeQuietly(AutoCloseable closeable)
-    {
-        try {
-            closeable.close();
-        }
-        catch (Exception ignored) {
-        }
     }
 }

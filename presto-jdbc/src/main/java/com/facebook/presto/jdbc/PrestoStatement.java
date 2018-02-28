@@ -33,6 +33,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
+import java.util.function.Function;
 
 import static com.facebook.presto.jdbc.PrestoResultSet.resultsException;
 import static java.lang.Math.toIntExact;
@@ -73,13 +74,13 @@ public class PrestoStatement
     public ResultSet executeQuery(String sql)
             throws SQLException
     {
-        return executeQuery(connection.get().createSession(getStatementSessionProperties()), sql);
+        return executeQuery(sql, session -> session);
     }
 
-    public ResultSet executeQuery(ClientSession session, String sql)
+    public ResultSet executeQuery(String sql, Function<ClientSession, ClientSession> sessionTransformer)
             throws SQLException
     {
-        if (!execute(session, sql)) {
+        if (!execute(sql, sessionTransformer)) {
             throw new SQLException("SQL statement is not a query: " + sql);
         }
         return currentResult.get();
@@ -226,25 +227,25 @@ public class PrestoStatement
     public boolean execute(String sql)
             throws SQLException
     {
-        return execute(connection.get().createSession(getStatementSessionProperties()), sql);
+        return execute(sql, session -> session);
     }
 
-    protected boolean execute(ClientSession session, String sql)
+    protected boolean execute(String sql, Function<ClientSession, ClientSession> sessionTransformer)
             throws SQLException
     {
         if (connection().shouldStartTransaction()) {
-            internalExecute(session, connection().getStartTransactionSql());
+            internalExecute(connection().getStartTransactionSql(), sessionTransformer);
         }
-        return internalExecute(session, sql);
+        return internalExecute(sql, sessionTransformer);
     }
 
     boolean internalExecute(String sql)
             throws SQLException
     {
-        return internalExecute(connection.get().createSession(getStatementSessionProperties()), sql);
+        return internalExecute(sql, session -> session);
     }
 
-    boolean internalExecute(ClientSession session, String sql)
+    boolean internalExecute(String sql, Function<ClientSession, ClientSession> sessionTransformer)
             throws SQLException
     {
         clearCurrentResults();
@@ -253,7 +254,7 @@ public class PrestoStatement
         StatementClient client = null;
         ResultSet resultSet = null;
         try {
-            client = connection().startQuery(session, sql);
+            client = connection().startQuery(sql, sessionTransformer, getStatementSessionProperties());
             if (client.isFinished()) {
                 QueryStatusInfo finalStatusInfo = client.finalStatusInfo();
                 if (finalStatusInfo.getError() != null) {
@@ -483,13 +484,13 @@ public class PrestoStatement
     public long executeLargeUpdate(String sql)
             throws SQLException
     {
-        return executeLargeUpdate(connection.get().createSession(getStatementSessionProperties()), sql);
+        return executeLargeUpdate(sql, session -> session);
     }
 
-    protected long executeLargeUpdate(ClientSession session, String sql)
+    protected long executeLargeUpdate(String sql, Function<ClientSession, ClientSession> sessionTransformer)
             throws SQLException
     {
-        if (execute(session, sql)) {
+        if (execute(sql, sessionTransformer)) {
             throw new SQLException("SQL is not an update statement: " + sql);
         }
         return currentUpdateCount.get();

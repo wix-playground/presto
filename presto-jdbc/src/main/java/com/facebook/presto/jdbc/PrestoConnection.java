@@ -51,6 +51,7 @@ import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Function;
 
 import static com.google.common.base.MoreObjects.firstNonNull;
 import static com.google.common.base.Preconditions.checkArgument;
@@ -630,7 +631,7 @@ public class PrestoConnection
                 readOnly.get() ? "ONLY" : "WRITE");
     }
 
-    ClientSession createSession(Map<String, String> sessionPropertiesOverride)
+    StatementClient startQuery(String sql, Function<ClientSession, ClientSession> sessionTransformer, Map<String, String> sessionPropertiesOverride)
     {
         String source = firstNonNull(clientInfo.get("ApplicationName"), "presto-jdbc");
 
@@ -644,7 +645,7 @@ public class PrestoConnection
         int millis = networkTimeoutMillis.get();
         Duration timeout = (millis > 0) ? new Duration(millis, MILLISECONDS) : new Duration(999, DAYS);
 
-        return new ClientSession(
+        ClientSession session = new ClientSession(
                 httpUri,
                 user,
                 source,
@@ -658,11 +659,8 @@ public class PrestoConnection
                 ImmutableMap.copyOf(preparedStatements),
                 transactionId.get(),
                 timeout);
-    }
 
-    StatementClient startQuery(ClientSession session, String sql)
-    {
-        return queryExecutor.startQuery(session, sql);
+        return queryExecutor.startQuery(sessionTransformer.apply(session), sql);
     }
 
     void updateSession(StatementClient client)
