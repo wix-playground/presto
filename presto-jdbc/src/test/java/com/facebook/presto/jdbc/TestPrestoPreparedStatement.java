@@ -18,14 +18,12 @@ import com.facebook.presto.server.testing.TestingPrestoServer;
 import com.facebook.presto.tpch.TpchPlugin;
 import io.airlift.log.Logging;
 import io.airlift.units.Duration;
-import org.joda.time.DateTimeZone;
 import org.testng.annotations.AfterClass;
 import org.testng.annotations.BeforeClass;
 import org.testng.annotations.Test;
 
 import java.math.BigDecimal;
 import java.sql.*;
-import java.util.GregorianCalendar;
 
 import static io.airlift.testing.Assertions.assertLessThan;
 import static io.airlift.units.Duration.nanosSince;
@@ -38,8 +36,6 @@ import static org.testng.Assert.assertTrue;
 
 public class TestPrestoPreparedStatement
 {
-    private static final DateTimeZone ASIA_ORAL_ZONE = DateTimeZone.forID("Asia/Oral");
-    private static final GregorianCalendar ASIA_ORAL_CALENDAR = new GregorianCalendar(ASIA_ORAL_ZONE.toTimeZone());
     private static final String TEST_CATALOG = "test_catalog";
 
     private TestingPrestoServer server;
@@ -197,22 +193,6 @@ public class TestPrestoPreparedStatement
                 statement.setTimestamp(11, new Timestamp(11));
                 assertEquals(statement.executeUpdate(), 1);
             }
-
-/*            try (Statement statement = connection.createStatement()) {
-                ResultSet rs = statement.executeQuery("SELECT * FROM test_execute_update");
-                assertTrue(rs.next());
-                assertEquals(null, rs.getObject(1));
-                assertEquals(true, rs.getBoolean(2));
-                assertEquals(3, rs.getInt(3));
-                assertEquals(4f, rs.getFloat(4));
-                assertEquals(5d, rs.getDouble(5));
-                assertEquals(BigDecimal.valueOf(6L), rs.getBigDecimal(6));
-                assertEquals("7'7", rs.getString(7));
-                assertEquals(new Date(8).toString(), rs.getDate(8).toString());
-                assertEquals(new Time(9).toString(), rs.getTime(9).toString());
-                assertEquals(new Timestamp(10), rs.getTimestamp(10));
-                assertFalse(rs.next());
-            }*/
         }
     }
 
@@ -293,4 +273,5 @@ public class TestPrestoPreparedStatement
         catch (Exception ignored) {
         }
     }
+
 }
