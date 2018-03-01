@@ -45,6 +45,7 @@ import java.util.Calendar;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Random;
 import java.util.function.Function;
 
 import static com.facebook.presto.spi.type.TypeSignature.parseTypeSignature;
@@ -58,12 +59,13 @@ public class PrestoPreparedStatement
     private final Map<Integer, String> parameters = new HashMap<>();
 
     private PrestoStatement statement;
+    private static Random rnd = new Random();
 
     PrestoPreparedStatement(PrestoConnection connection, String sql)
             throws SQLException
     {
         super(connection);
-        this.queryName = "preparedQuery";
+        this.queryName = "preparedQuery" + Math.abs(rnd.nextInt());
         this.sessionTransformer = clientSession -> ClientSession.withPreparedStatements(clientSession, ImmutableMap.of(queryName, sql));
     }
 
@@ -230,6 +232,7 @@ public class PrestoPreparedStatement
     public void close()
             throws SQLException
     {
+        super.close();
         closeCurrentStatement();
     }
 
@@ -408,25 +411,26 @@ public class PrestoPreparedStatement
     public ResultSetMetaData getMetaData()
             throws SQLException
     {
-        PrestoStatement statement = (PrestoStatement) getConnection().createStatement();
-        ResultSet rs = statement.executeQuery("DESCRIBE OUTPUT " + queryName, sessionTransformer);
+        try (PrestoStatement statement = (PrestoStatement) getConnection().createStatement()) {
+            ResultSet rs = statement.executeQuery("DESCRIBE OUTPUT " + queryName, sessionTransformer);
 
-        ImmutableList.Builder<ColumnInfo> list = ImmutableList.builder();
+            ImmutableList.Builder<ColumnInfo> list = ImmutableList.builder();
 
-        while (rs.next()) {
-            ColumnInfo.Builder builder = new ColumnInfo.Builder()
-                    .setCatalogName(rs.getString(2))
-                    .setSchemaName(rs.getString(3))
-                    .setTableName(rs.getString(4))
-                    .setColumnLabel(rs.getString(1))
-                    .setColumnName(rs.getString(1))
-                    .setColumnTypeSignature(parseTypeSignature(rs.getString(5)))
-                    .setNullable(ColumnInfo.Nullable.NULLABLE)
-                    .setCurrency(false);
-            ColumnInfo.setTypeInfo(builder, parseTypeSignature(rs.getString(5)));
-            list.add(builder.build());
+            while (rs.next()) {
+                ColumnInfo.Builder builder = new ColumnInfo.Builder()
+                        .setCatalogName(rs.getString(2))
+                        .setSchemaName(rs.getString(3))
+                        .setTableName(rs.getString(4))
+                        .setColumnLabel(rs.getString(1))
+                        .setColumnName(rs.getString(1))
+                        .setColumnTypeSignature(parseTypeSignature(rs.getString(5)))
+                        .setNullable(ColumnInfo.Nullable.NULLABLE)
+                        .setCurrency(false);
+                ColumnInfo.setTypeInfo(builder, parseTypeSignature(rs.getString(5)));
+                list.add(builder.build());
+            }
+            return new PrestoResultSetMetaData(list.build());
         }
-        return new PrestoResultSetMetaData(list.build());
     }
 
     @Override
@@ -468,20 +472,21 @@ public class PrestoPreparedStatement
     public ParameterMetaData getParameterMetaData()
             throws SQLException
     {
-        PrestoStatement statement = (PrestoStatement) getConnection().createStatement();
-        ResultSet rs = statement.executeQuery("DESCRIBE INPUT " + queryName, sessionTransformer);
+        try (PrestoStatement statement = (PrestoStatement) getConnection().createStatement()) {
+            ResultSet rs = statement.executeQuery("DESCRIBE INPUT " + queryName, sessionTransformer);
 
-        ImmutableList.Builder<ParameterInfo> list = ImmutableList.builder();
+            ImmutableList.Builder<ParameterInfo> list = ImmutableList.builder();
 
-        while (rs.next()) {
-            ParameterInfo.Builder builder = new ParameterInfo.Builder()
-                    .setPosition(rs.getInt(1))
-                    .setParameterTypeSignature(parseTypeSignature(rs.getString(2)))
-                    .setNullable(ColumnInfo.Nullable.NULLABLE);
-            ParameterInfo.setTypeInfo(builder, parseTypeSignature(rs.getString(2)));
-            list.add(builder.build());
+            while (rs.next()) {
+                ParameterInfo.Builder builder = new ParameterInfo.Builder()
+                        .setPosition(rs.getInt(1))
+                        .setParameterTypeSignature(parseTypeSignature(rs.getString(2)))
+                        .setNullable(ColumnInfo.Nullable.NULLABLE);
+                ParameterInfo.setTypeInfo(builder, parseTypeSignature(rs.getString(2)));
+                list.add(builder.build());
+            }
+            return new PrestoParameterMetaData(list.build());
         }
-        return new PrestoParameterMetaData(list.build());
     }
 
     @Override
