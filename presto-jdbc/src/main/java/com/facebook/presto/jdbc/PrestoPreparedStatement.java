@@ -70,6 +70,15 @@ public class PrestoPreparedStatement
     }
 
     @Override
+    public boolean execute()
+            throws SQLException
+    {
+        closeCurrentStatement();
+        statement = (PrestoStatement) getConnection().createStatement();
+        return statement.execute(getExecuteSql(), sessionTransformer);
+    }
+
+    @Override
     public ResultSet executeQuery()
             throws SQLException
     {
@@ -88,12 +97,12 @@ public class PrestoPreparedStatement
     }
 
     @Override
-    public boolean execute()
+    public long executeLargeUpdate()
             throws SQLException
     {
         closeCurrentStatement();
         statement = (PrestoStatement) getConnection().createStatement();
-        return statement.execute(getExecuteSql(), sessionTransformer);
+        return statement.executeLargeUpdate(getExecuteSql(), sessionTransformer);
     }
 
     @Override
@@ -384,7 +393,7 @@ public class PrestoPreparedStatement
     public void addBatch()
             throws SQLException
     {
-        throw new NotImplementedException("PreparedStatement", "addBatch");
+        throw new SQLFeatureNotSupportedException("Batches not supported");
     }
 
     @Override
@@ -635,13 +644,6 @@ public class PrestoPreparedStatement
             throws SQLException
     {
         throw new SQLFeatureNotSupportedException("setNClob");
-    }
-
-    @Override
-    public void addBatch(String sql)
-            throws SQLException
-    {
-        throw new SQLException("This method cannot be called on PreparedStatement");
     }
 
     private void setParameter(int parameterIndex, String value)
