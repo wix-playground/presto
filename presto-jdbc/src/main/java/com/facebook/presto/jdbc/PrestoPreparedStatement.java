@@ -87,6 +87,15 @@ public class PrestoPreparedStatement
         return Ints.saturatedCast(statement.executeLargeUpdate(usingSql(), sessionTransformer));
     }
 
+    @Override
+    public boolean execute()
+            throws SQLException
+    {
+        closeCurrentStatement();
+        statement = (PrestoStatement) getConnection().createStatement();
+        return statement.execute(usingSql(), sessionTransformer);
+    }
+
     private String usingSql()
             throws SQLException
     {
@@ -356,13 +365,6 @@ public class PrestoPreparedStatement
         else {
             throw new SQLException("Unsupported object type: " + x.getClass().getName());
         }
-    }
-
-    @Override
-    public boolean execute()
-            throws SQLException
-    {
-        throw new NotImplementedException("PreparedStatement", "execute");
     }
 
     @Override
