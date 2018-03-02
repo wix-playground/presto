@@ -75,7 +75,7 @@ public class PrestoPreparedStatement
     {
         closeCurrentStatement();
         statement = (PrestoStatement) getConnection().createStatement();
-        return statement.executeQuery(usingSql(), sessionTransformer);
+        return statement.executeQuery(getExecuteSql(), sessionTransformer);
     }
 
     @Override
@@ -84,7 +84,7 @@ public class PrestoPreparedStatement
     {
         closeCurrentStatement();
         statement = (PrestoStatement) getConnection().createStatement();
-        return Ints.saturatedCast(statement.executeLargeUpdate(usingSql(), sessionTransformer));
+        return Ints.saturatedCast(statement.executeLargeUpdate(getExecuteSql(), sessionTransformer));
     }
 
     @Override
@@ -93,7 +93,7 @@ public class PrestoPreparedStatement
     {
         closeCurrentStatement();
         statement = (PrestoStatement) getConnection().createStatement();
-        return statement.execute(usingSql(), sessionTransformer);
+        return statement.execute(getExecuteSql(), sessionTransformer);
     }
 
     @Override
@@ -102,15 +102,17 @@ public class PrestoPreparedStatement
     {
         if (statement != null) {
             return statement.getResultSet();
-        } else {
+        }
+        else {
             return null;
         }
     }
 
-    private String usingSql()
+    private String getExecuteSql()
             throws SQLException
     {
-        return "EXECUTE " + queryName + " USING " + formatParameters();
+        String paramString = (parameters.isEmpty()) ? "" : " USING " + formatParameters();
+        return "EXECUTE " + queryName + paramString;
     }
 
     @Override
