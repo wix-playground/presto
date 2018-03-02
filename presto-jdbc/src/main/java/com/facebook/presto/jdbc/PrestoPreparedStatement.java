@@ -96,6 +96,17 @@ public class PrestoPreparedStatement
         return statement.execute(usingSql(), sessionTransformer);
     }
 
+    @Override
+    public ResultSet getResultSet()
+            throws SQLException
+    {
+        if (statement != null) {
+            return statement.getResultSet();
+        } else {
+            return null;
+        }
+    }
+
     private String usingSql()
             throws SQLException
     {
