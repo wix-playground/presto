@@ -79,8 +79,8 @@ public class TestPrestoPreparedStatement
                 Statement statement = connection.createStatement()) {
             assertEquals(statement.executeUpdate("CREATE SCHEMA blackhole.blackhole"), 0);
 
-            try (Statement st1 = connection.createStatement()) {
-                st1.execute("CREATE TABLE test_execute_update (" +
+            try (Statement st = connection.createStatement()) {
+                st.execute("CREATE TABLE test_execute_update (" +
                         "c_null boolean, " +
                         "c_boolean boolean, " +
                         "c_integer integer, " +
@@ -94,6 +94,10 @@ public class TestPrestoPreparedStatement
                         "c_timestamp timestamp" +
                         ")");
             }
+
+            try (Statement st = connection.createStatement()) {
+                st.execute("CREATE TABLE test_execute_simple_update (c_integer integer)");
+            }
         }
     }
 
@@ -101,6 +105,51 @@ public class TestPrestoPreparedStatement
     public void teardown()
     {
         closeQuietly(server);
+    }
+
+    @Test
+    public void testExecute()
+            throws Exception
+    {
+        try (Connection connection = createConnection("blackhole", "blackhole")) {
+            try (PreparedStatement statement = connection.prepareStatement("SELECT ?")) {
+                statement.setShort(1, (short) 3);
+                assertTrue(statement.execute());
+            }
+
+            try (PreparedStatement statement = connection.prepareStatement("INSERT INTO test_execute_simple_update VALUES (?)")) {
+                statement.setInt(1, 1);
+                assertFalse(statement.execute());
+            }
+        }
+    }
+
+    @Test
+    public void testExecuteWithoutParameters()
+            throws Exception
+    {
+        try (Connection connection = createConnection()) {
+            try (PreparedStatement statement = connection.prepareStatement("SELECT 1")) {
+                assertTrue(statement.execute());
+            }
+        }
+    }
+
+    @Test
+    public void testGetResultSet()
+            throws Exception
+    {
+        try (Connection connection = createConnection()) {
+            try (PreparedStatement statement = connection.prepareStatement("SELECT ?")) {
+                statement.setInt(1, 100);
+                statement.execute();
+                ResultSet rs = statement.getResultSet();
+
+                assertTrue(rs.next());
+                assertEquals(rs.getInt(1), 100);
+                assertFalse(rs.next());
+            }
+        }
     }
 
     @Test
@@ -137,6 +186,50 @@ public class TestPrestoPreparedStatement
                 assertEquals(rs.getTime(11).toString(), new Time(11).toString());
                 assertEquals(rs.getTimestamp(12), new Timestamp(12));
                 assertFalse(rs.next());
+            }
+        }
+    }
+
+    @Test(expectedExceptions = {SQLException.class})
+    public void testExecuteQueryShouldThrowExceptionIfItIsNotAQuery()
+            throws Exception
+    {
+        try (Connection connection = createConnection("blackhole", "blackhole")) {
+            try (PreparedStatement statement = connection.prepareStatement("INSERT INTO test_execute_simple_update VALUES (5)")) {
+                statement.executeQuery();
+            }
+        }
+    }
+
+    @Test
+    public void testExecuteUpdate()
+            throws Exception
+    {
+        try (Connection connection = createConnection("blackhole", "blackhole")) {
+            try (PreparedStatement statement = connection.prepareStatement("INSERT INTO test_execute_update VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")) {
+                statement.setNull(1, Types.BOOLEAN);
+                statement.setBoolean(2, true);
+                statement.setInt(3, 3);
+                statement.setLong(4, 4);
+                statement.setFloat(5, 5f);
+                statement.setDouble(6, 6d);
+                statement.setBigDecimal(7, BigDecimal.valueOf(7L));
+                statement.setString(8, "8'8");
+                statement.setDate(9, new Date(9));
+                statement.setTime(10, new Time(10));
+                statement.setTimestamp(11, new Timestamp(11));
+                assertEquals(statement.executeUpdate(), 1);
+            }
+        }
+    }
+
+    @Test(expectedExceptions = {SQLException.class})
+    public void testExecuteUpdateShouldThrowExceptionIfItIsNotAnUpdate()
+            throws Exception
+    {
+        try (Connection connection = createConnection("blackhole", "blackhole")) {
+            try (PreparedStatement statement = connection.prepareStatement("SELECT ?")) {
+                statement.executeUpdate();
             }
         }
     }
@@ -179,28 +272,6 @@ public class TestPrestoPreparedStatement
                 assertFalse(rs2.isClosed());
             }
             assertTrue(rs2.isClosed());
-        }
-    }
-
-    @Test
-    public void testExecuteUpdate()
-            throws Exception
-    {
-        try (Connection connection = createConnection("blackhole", "blackhole")) {
-            try (PreparedStatement statement = connection.prepareStatement("INSERT INTO test_execute_update VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")) {
-                statement.setNull(1, Types.BOOLEAN);
-                statement.setBoolean(2, true);
-                statement.setInt(3, 3);
-                statement.setLong(4, 4);
-                statement.setFloat(5, 5f);
-                statement.setDouble(6, 6d);
-                statement.setBigDecimal(7, BigDecimal.valueOf(7L));
-                statement.setString(8, "8'8");
-                statement.setDate(9, new Date(9));
-                statement.setTime(10, new Time(10));
-                statement.setTimestamp(11, new Timestamp(11));
-                assertEquals(statement.executeUpdate(), 1);
-            }
         }
     }
 
