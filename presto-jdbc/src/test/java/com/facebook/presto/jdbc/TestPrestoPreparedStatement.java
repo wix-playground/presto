@@ -223,6 +223,28 @@ public class TestPrestoPreparedStatement
         }
     }
 
+    @Test
+    public void testExecuteLargeUpdate()
+            throws Exception
+    {
+        try (Connection connection = createConnection("blackhole", "blackhole")) {
+            try (PreparedStatement statement = connection.prepareStatement("INSERT INTO test_execute_update VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")) {
+                statement.setNull(1, Types.BOOLEAN);
+                statement.setBoolean(2, true);
+                statement.setInt(3, 3);
+                statement.setLong(4, 4);
+                statement.setFloat(5, 5f);
+                statement.setDouble(6, 6d);
+                statement.setBigDecimal(7, BigDecimal.valueOf(7L));
+                statement.setString(8, "8'8");
+                statement.setDate(9, new Date(9));
+                statement.setTime(10, new Time(10));
+                statement.setTimestamp(11, new Timestamp(11));
+                assertEquals(statement.executeLargeUpdate(), 1);
+            }
+        }
+    }
+
     @Test(expectedExceptions = {SQLException.class})
     public void testExecuteUpdateShouldThrowExceptionIfItIsNotAnUpdate()
             throws Exception
