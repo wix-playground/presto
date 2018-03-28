@@ -66,7 +66,9 @@ public class PrestoPreparedStatement
     {
         super(connection);
         this.queryName = "preparedQuery" + Math.abs(rnd.nextInt());
-        this.sessionTransformer = clientSession -> ClientSession.withPreparedStatements(clientSession, ImmutableMap.of(queryName, sql));
+        this.sessionTransformer = clientSession -> ClientSession.builder(clientSession)
+                .withPreparedStatements(ImmutableMap.of(queryName, sql))
+                .build();
     }
 
     @Override
