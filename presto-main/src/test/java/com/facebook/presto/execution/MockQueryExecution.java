@@ -151,6 +151,7 @@ public class MockQueryExecution
 
                         new DataSize(30, BYTE),
 
+                        ImmutableList.of(),
                         ImmutableList.of()),
                 Optional.empty(),
                 Optional.empty(),
@@ -213,7 +214,7 @@ public class MockQueryExecution
     }
 
     @Override
-    public long getTotalMemoryReservation()
+    public long getUserMemoryReservation()
     {
         return memoryUsage;
     }

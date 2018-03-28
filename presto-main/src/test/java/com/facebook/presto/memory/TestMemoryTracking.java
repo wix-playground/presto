@@ -30,6 +30,7 @@ import com.facebook.presto.spi.QueryId;
 import com.facebook.presto.spi.memory.MemoryPoolId;
 import com.facebook.presto.spiller.SpillSpaceTracker;
 import com.facebook.presto.sql.planner.plan.PlanNodeId;
+import io.airlift.stats.TestingGcMonitor;
 import io.airlift.units.DataSize;
 import org.testng.annotations.AfterClass;
 import org.testng.annotations.BeforeClass;
@@ -103,6 +104,7 @@ public class TestMemoryTracking
                 queryMaxMemory,
                 userPool,
                 systemPool,
+                new TestingGcMonitor(),
                 notificationExecutor,
                 yieldExecutor,
                 queryMaxSpillSize,
@@ -395,10 +397,10 @@ public class TestMemoryTracking
             long expectedRevocableMemory,
             long expectedSystemMemory)
     {
-        assertEquals(operatorStats.getMemoryReservation().toBytes(), expectedUserMemory);
-        assertEquals(driverStats.getMemoryReservation().toBytes(), expectedUserMemory);
-        assertEquals(pipelineStats.getMemoryReservation().toBytes(), expectedUserMemory);
-        assertEquals(taskStats.getMemoryReservation().toBytes(), expectedUserMemory);
+        assertEquals(operatorStats.getUserMemoryReservation().toBytes(), expectedUserMemory);
+        assertEquals(driverStats.getUserMemoryReservation().toBytes(), expectedUserMemory);
+        assertEquals(pipelineStats.getUserMemoryReservation().toBytes(), expectedUserMemory);
+        assertEquals(taskStats.getUserMemoryReservation().toBytes(), expectedUserMemory);
 
         assertEquals(operatorStats.getSystemMemoryReservation().toBytes(), expectedSystemMemory);
         assertEquals(driverStats.getSystemMemoryReservation().toBytes(), expectedSystemMemory);

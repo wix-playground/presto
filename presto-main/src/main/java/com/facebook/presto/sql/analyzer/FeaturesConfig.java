@@ -41,6 +41,7 @@ import static java.util.concurrent.TimeUnit.MINUTES;
 
 @DefunctConfig({
         "resource-group-manager",
+        "experimental.resource-groups-enabled",
         "experimental-syntax-enabled",
         "analyzer.experimental-syntax-enabled",
         "optimizer.processing-optimization"})
@@ -57,6 +58,7 @@ public class FeaturesConfig
     private boolean distributedIndexJoinsEnabled;
     private boolean distributedJoinsEnabled = true;
     private boolean colocatedJoinsEnabled;
+    private boolean spatialJoinsEnabled = true;
     private boolean fastInequalityJoins = true;
     private boolean reorderJoins = true;
     private boolean redistributeWrites = true;
@@ -64,7 +66,6 @@ public class FeaturesConfig
     private DataSize writerMinSize = new DataSize(32, DataSize.Unit.MEGABYTE);
     private boolean optimizeMetadataQueries;
     private boolean optimizeHashGeneration = true;
-    private boolean optimizeSingleDistinct = true;
     private boolean enableIntermediateAggregations;
     private boolean pushTableWriteThroughUnion = true;
     private boolean exchangeCompressionEnabled;
@@ -78,7 +79,6 @@ public class FeaturesConfig
     private boolean pagesIndexEagerCompactionEnabled;
 
     private boolean dictionaryAggregation;
-    private boolean resourceGroups;
 
     private int re2JDfaStatesLimit = Integer.MAX_VALUE;
     private int re2JDfaRetries = 5;
@@ -94,7 +94,8 @@ public class FeaturesConfig
     private boolean pushAggregationThroughJoin = true;
     private double memoryRevokingTarget = 0.5;
     private double memoryRevokingThreshold = 0.9;
-    private boolean parseDecimalLiteralsAsDouble = true;
+    private boolean parseDecimalLiteralsAsDouble;
+    private boolean useMarkDistinct = true;
 
     private Duration iterativeOptimizerTimeout = new Duration(3, MINUTES); // by default let optimizer wait a long time in case it retrieves some data from ConnectorMetadata
 
@@ -134,18 +135,6 @@ public class FeaturesConfig
     public FeaturesConfig setNetworkCostWeight(double networkCostWeight)
     {
         this.networkCostWeight = networkCostWeight;
-        return this;
-    }
-
-    public boolean isResourceGroupsEnabled()
-    {
-        return resourceGroups;
-    }
-
-    @Config("experimental.resource-groups-enabled")
-    public FeaturesConfig setResourceGroupsEnabled(boolean enabled)
-    {
-        resourceGroups = enabled;
         return this;
     }
 
@@ -246,6 +235,19 @@ public class FeaturesConfig
         return this;
     }
 
+    public boolean isSpatialJoinsEnabled()
+    {
+        return spatialJoinsEnabled;
+    }
+
+    @Config("spatial-joins-enabled")
+    @ConfigDescription("Use spatial index for spatial joins when possible")
+    public FeaturesConfig setSpatialJoinsEnabled(boolean spatialJoinsEnabled)
+    {
+        this.spatialJoinsEnabled = spatialJoinsEnabled;
+        return this;
+    }
+
     @Config("fast-inequality-joins")
     @ConfigDescription("Use faster handling of inequality joins if it is possible")
     public FeaturesConfig setFastInequalityJoins(boolean fastInequalityJoins)
@@ -322,6 +324,18 @@ public class FeaturesConfig
         return this;
     }
 
+    public boolean isUseMarkDistinct()
+    {
+        return useMarkDistinct;
+    }
+
+    @Config("optimizer.use-mark-distinct")
+    public FeaturesConfig setUseMarkDistinct(boolean value)
+    {
+        this.useMarkDistinct = value;
+        return this;
+    }
+
     public boolean isOptimizeHashGeneration()
     {
         return optimizeHashGeneration;
@@ -331,18 +345,6 @@ public class FeaturesConfig
     public FeaturesConfig setOptimizeHashGeneration(boolean optimizeHashGeneration)
     {
         this.optimizeHashGeneration = optimizeHashGeneration;
-        return this;
-    }
-
-    public boolean isOptimizeSingleDistinct()
-    {
-        return optimizeSingleDistinct;
-    }
-
-    @Config("optimizer.optimize-single-distinct")
-    public FeaturesConfig setOptimizeSingleDistinct(boolean optimizeSingleDistinct)
-    {
-        this.optimizeSingleDistinct = optimizeSingleDistinct;
         return this;
     }
 

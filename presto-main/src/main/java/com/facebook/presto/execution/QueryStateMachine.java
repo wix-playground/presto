@@ -26,6 +26,7 @@ import com.facebook.presto.security.AccessControl;
 import com.facebook.presto.spi.ErrorCode;
 import com.facebook.presto.spi.PrestoException;
 import com.facebook.presto.spi.QueryId;
+import com.facebook.presto.spi.eventlistener.StageGcStatistics;
 import com.facebook.presto.spi.resourceGroups.ResourceGroupId;
 import com.facebook.presto.spi.type.Type;
 import com.facebook.presto.sql.planner.PlanFragment;
@@ -331,8 +332,8 @@ public class QueryStateMachine
         int blockedDrivers = 0;
         int completedDrivers = 0;
 
-        long cumulativeMemory = 0;
-        long totalMemoryReservation = 0;
+        long cumulativeUserMemory = 0;
+        long userMemoryReservation = 0;
 
         long totalScheduledTime = 0;
         long totalCpuTime = 0;
@@ -349,6 +350,8 @@ public class QueryStateMachine
         long outputPositions = 0;
 
         long physicalWrittenDataSize = 0;
+
+        ImmutableList.Builder<StageGcStatistics> stageGcStatistics = ImmutableList.builder();
 
         boolean fullyBlocked = rootStage.isPresent();
         Set<BlockedReason> blockedReasons = new HashSet<>();
@@ -367,8 +370,8 @@ public class QueryStateMachine
             blockedDrivers += stageStats.getBlockedDrivers();
             completedDrivers += stageStats.getCompletedDrivers();
 
-            cumulativeMemory += stageStats.getCumulativeMemory();
-            totalMemoryReservation += stageStats.getTotalMemoryReservation().toBytes();
+            cumulativeUserMemory += stageStats.getCumulativeUserMemory();
+            userMemoryReservation += stageStats.getUserMemoryReservation().toBytes();
             totalScheduledTime += stageStats.getTotalScheduledTime().roundTo(MILLISECONDS);
             totalCpuTime += stageStats.getTotalCpuTime().roundTo(MILLISECONDS);
             totalUserTime += stageStats.getTotalUserTime().roundTo(MILLISECONDS);
@@ -388,6 +391,8 @@ public class QueryStateMachine
             }
 
             physicalWrittenDataSize += stageStats.getPhysicalWrittenDataSize().toBytes();
+
+            stageGcStatistics.add(stageStats.getGcInfo());
 
             completeInfo = completeInfo && stageInfo.isCompleteInfo();
             operatorStatsSummary.addAll(stageInfo.getStageStats().getOperatorSummaries());
@@ -424,8 +429,8 @@ public class QueryStateMachine
                 blockedDrivers,
                 completedDrivers,
 
-                cumulativeMemory,
-                succinctBytes(totalMemoryReservation),
+                cumulativeUserMemory,
+                succinctBytes(userMemoryReservation),
                 succinctBytes(getPeakUserMemoryInBytes()),
                 succinctBytes(getPeakTotalMemoryInBytes()),
 
@@ -446,6 +451,8 @@ public class QueryStateMachine
                 outputPositions,
 
                 succinctBytes(physicalWrittenDataSize),
+
+                stageGcStatistics.build(),
 
                 operatorStatsSummary.build());
 
@@ -873,8 +880,8 @@ public class QueryStateMachine
                 queryStats.getRunningDrivers(),
                 queryStats.getBlockedDrivers(),
                 queryStats.getCompletedDrivers(),
-                queryStats.getCumulativeMemory(),
-                queryStats.getTotalMemoryReservation(),
+                queryStats.getCumulativeUserMemory(),
+                queryStats.getUserMemoryReservation(),
                 queryStats.getPeakUserMemoryReservation(),
                 queryStats.getPeakTotalMemoryReservation(),
                 queryStats.isScheduled(),
@@ -891,6 +898,7 @@ public class QueryStateMachine
                 queryStats.getOutputDataSize(),
                 queryStats.getOutputPositions(),
                 queryStats.getPhysicalWrittenDataSize(),
+                queryStats.getStageGcStatistics(),
                 ImmutableList.of()); // Remove the operator summaries as OperatorInfo (especially ExchangeClientStatus) can hold onto a large amount of memory
     }
 
