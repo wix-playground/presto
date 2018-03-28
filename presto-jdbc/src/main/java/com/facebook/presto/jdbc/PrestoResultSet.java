@@ -51,6 +51,8 @@ import java.sql.Statement;
 import java.sql.Time;
 import java.sql.Timestamp;
 import java.sql.Types;
+import java.text.NumberFormat;
+import java.text.ParseException;
 import java.util.Calendar;
 import java.util.HashMap;
 import java.util.Iterator;
@@ -1717,6 +1719,14 @@ public class PrestoResultSet
         }
         if (value instanceof Boolean) {
             return ((Boolean) value) ? 1 : 0;
+        }
+        if (value instanceof String) {
+            try {
+                return NumberFormat.getInstance().parse((String) value);
+            }
+            catch (ParseException e) {
+                throw new SQLException("Specified string value can't be parsed to number", e);
+            }
         }
         throw new SQLException("Value is not a number: " + value.getClass().getCanonicalName());
     }
