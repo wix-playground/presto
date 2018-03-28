@@ -13,11 +13,18 @@
  */
 package com.facebook.presto.tests;
 
+import com.facebook.presto.tests.tpch.TpchQueryRunnerBuilder;
 import com.google.common.collect.ImmutableMap;
 import org.testng.annotations.Test;
 
-import static com.facebook.presto.tests.tpch.TpchQueryRunner.createQueryRunner;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.regex.Pattern;
+
 import static org.testng.Assert.assertEquals;
+import static org.testng.Assert.assertTrue;
 import static org.testng.Assert.fail;
 
 // run single threaded to avoid creating multiple query runners at once
@@ -28,10 +35,10 @@ public class TestMinWorkerRequirement
     public void testInsufficientWorkerNodes()
             throws Exception
     {
-        try (DistributedQueryRunner queryRunner = createQueryRunner(
-                ImmutableMap.of(),
-                ImmutableMap.of("query-manager.initialization-required-workers", "5"),
-                4)) {
+        try (DistributedQueryRunner queryRunner = TpchQueryRunnerBuilder.builder()
+                .setSingleCoordinatorProperty("query-manager.initialization-required-workers", "5")
+                .setNodeCount(4)
+                .build()) {
             queryRunner.execute("SELECT 1");
             fail("Expected exception due to insufficient active worker nodes");
         }
@@ -41,30 +48,46 @@ public class TestMinWorkerRequirement
     public void testInsufficientWorkerNodesWithCoordinatorExcluded()
             throws Exception
     {
-        try (DistributedQueryRunner queryRunner = createQueryRunner(
-                ImmutableMap.of("node-scheduler.include-coordinator", "false"),
-                ImmutableMap.of("query-manager.initialization-required-workers", "4"),
-                4)) {
+        try (DistributedQueryRunner queryRunner = TpchQueryRunnerBuilder.builder()
+                .setSingleExtraProperty("node-scheduler.include-coordinator", "false")
+                .setSingleCoordinatorProperty("query-manager.initialization-required-workers", "4")
+                .setNodeCount(4)
+                .build()) {
             queryRunner.execute("SELECT 1");
             fail("Expected exception due to insufficient active worker nodes");
         }
     }
 
-    @Test
+    @Test(timeOut = 60_000)
     public void testSufficientWorkerNodes()
             throws Exception
     {
-        try (DistributedQueryRunner queryRunner = createQueryRunner(
-                ImmutableMap.of(),
-                ImmutableMap.of("query-manager.initialization-required-workers", "4"),
-                4)) {
-            queryRunner.execute("SELECT 1");
+        try (DistributedQueryRunner queryRunner = TpchQueryRunnerBuilder.builder()
+                .setSingleCoordinatorProperty("query-manager.initialization-required-workers", "4")
+                .setNodeCount(4)
+                .build()) {
+            // wait until we have 4 nodes active
+            while (true) {
+                int activeNodes = queryRunner.getCoordinator().refreshNodes().getActiveNodes().size();
+                if (activeNodes == 4) {
+                    break;
+                }
+            }
             assertEquals(queryRunner.getCoordinator().refreshNodes().getActiveNodes().size(), 4);
+            queryRunner.execute("SELECT 1");
 
-            // Query should still be allowed to run if active workers drop down below the minimum required nodes
+            // Query should fail when we terminate a server (not enough active nodes)
             queryRunner.getServers().get(0).close();
             assertEquals(queryRunner.getCoordinator().refreshNodes().getActiveNodes().size(), 3);
-            queryRunner.execute("SELECT 1");
+
+            ExecutorService executor = Executors.newSingleThreadExecutor();
+            Future<?> future = executor.submit(() -> queryRunner.execute("SELECT 1"));
+            try {
+                future.get();
+            }
+            catch (ExecutionException e) {
+                assertTrue(Pattern.matches(".*Not enough active nodes.*", e.getMessage()));
+            }
         }
     }
 
@@ -72,13 +95,13 @@ public class TestMinWorkerRequirement
     public void testInitializationTimeout()
             throws Exception
     {
-        try (DistributedQueryRunner queryRunner = createQueryRunner(
-                ImmutableMap.of(),
-                ImmutableMap.<String, String>builder()
-                        .put("query-manager.initialization-required-workers", "5")
+        try (DistributedQueryRunner queryRunner = TpchQueryRunnerBuilder.builder()
+                .setCoordinatorProperties(ImmutableMap.<String, String>builder()
+                        .put("query-manager.initialization-required-workers", "4")
                         .put("query-manager.initialization-timeout", "1ns")
-                        .build(),
-                4)) {
+                        .build())
+                .setNodeCount(4)
+                .build()) {
             queryRunner.execute("SELECT 1");
             assertEquals(queryRunner.getCoordinator().refreshNodes().getActiveNodes().size(), 4);
         }
